@@ -1,0 +1,21 @@
+# Build
+build/
+vo_submission
+vo_submission.exe
+*.o
+*.obj
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+*.csv
+*.png
+*.jpg
+*.jpeg
