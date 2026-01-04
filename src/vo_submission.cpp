@@ -1,6 +1,6 @@
 /*
  * Visual Odometry - 2-Frame Relative Pose Estimation
- * Usage: ./vo_submission <image1> <image2> [-f focal_length]
+ * Usage: ./vo_submission <image1> <image2> [-f focal_length] [-s scale]
  * Output: roll pitch yaw tx ty tz (degrees, unit vector)
  */
 
@@ -9,7 +9,6 @@
 #include <iostream>
 #include <cmath>
 #include <unordered_map>
-#include <algorithm>
 #include <string>
 
 double computeSampsonError(const cv::Point2f& pt1, const cv::Point2f& pt2,
@@ -29,7 +28,6 @@ double computeSampsonError(const cv::Point2f& pt1, const cv::Point2f& pt2,
                    Etp2.at<double>(1) * Etp2.at<double>(1);
 
     if (denom < 1e-10) return 1e10;
-
     return (p2tEp1 * p2tEp1) / denom;
 }
 
@@ -49,12 +47,11 @@ double computeHomographyScore(const std::vector<cv::Point2f>& pts1,
         cv::Mat p1_proj = Hinv * p2;
         p1_proj /= p1_proj.at<double>(2);
 
-        double err1 = std::pow(p2_proj.at<double>(0) - pts2[i].x, 2) +
-                      std::pow(p2_proj.at<double>(1) - pts2[i].y, 2);
-        double err2 = std::pow(p1_proj.at<double>(0) - pts1[i].x, 2) +
-                      std::pow(p1_proj.at<double>(1) - pts1[i].y, 2);
+        double err = std::pow(p2_proj.at<double>(0) - pts2[i].x, 2) +
+                     std::pow(p2_proj.at<double>(1) - pts2[i].y, 2) +
+                     std::pow(p1_proj.at<double>(0) - pts1[i].x, 2) +
+                     std::pow(p1_proj.at<double>(1) - pts1[i].y, 2);
 
-        double err = err1 + err2;
         if (err < threshold) score += (threshold - err);
     }
     return score;
@@ -120,11 +117,14 @@ void printZeroPose() {
 int main(int argc, char** argv) {
     std::string img1_path, img2_path;
     double user_focal = -1;
+    double scale = 0.5;  // Default: half resolution for speed
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "-f" && i + 1 < argc) {
             user_focal = std::stod(argv[++i]);
+        } else if (arg == "-s" && i + 1 < argc) {
+            scale = std::stod(argv[++i]);
         } else if (img1_path.empty()) {
             img1_path = arg;
         } else if (img2_path.empty()) {
@@ -133,19 +133,33 @@ int main(int argc, char** argv) {
     }
 
     if (img1_path.empty() || img2_path.empty()) {
-        std::cerr << "Usage: " << argv[0] << " <image1> <image2> [-f focal_length]" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <image1> <image2> [-f focal_length] [-s scale]" << std::endl;
         return 1;
     }
 
-    cv::Mat img1 = cv::imread(img1_path, cv::IMREAD_GRAYSCALE);
-    cv::Mat img2 = cv::imread(img2_path, cv::IMREAD_GRAYSCALE);
+    cv::Mat img1_full = cv::imread(img1_path, cv::IMREAD_GRAYSCALE);
+    cv::Mat img2_full = cv::imread(img2_path, cv::IMREAD_GRAYSCALE);
 
-    if (img1.empty() || img2.empty()) {
+    if (img1_full.empty() || img2_full.empty()) {
         std::cerr << "Error: Could not load images" << std::endl;
         return 1;
     }
 
-    auto orb = cv::ORB::create(2000);
+    // Downscale for speed
+    cv::Mat img1, img2;
+    if (scale < 1.0) {
+        cv::resize(img1_full, img1, cv::Size(), scale, scale, cv::INTER_AREA);
+        cv::resize(img2_full, img2, cv::Size(), scale, scale, cv::INTER_AREA);
+    } else {
+        img1 = img1_full;
+        img2 = img2_full;
+    }
+
+    // Adjust focal length for scale
+    if (user_focal > 0) user_focal *= scale;
+
+    int nfeatures = (scale >= 1.0) ? 2000 : (scale >= 0.5) ? 1000 : 500;
+    auto orb = cv::ORB::create(nfeatures);
     std::vector<cv::KeyPoint> kp1, kp2;
     cv::Mat desc1, desc2;
     orb->detectAndCompute(img1, cv::noArray(), kp1, desc1);
@@ -155,17 +169,6 @@ int main(int argc, char** argv) {
         printZeroPose();
         return 0;
     }
-
-    std::vector<cv::Point2f> corners1, corners2;
-    cv::KeyPoint::convert(kp1, corners1);
-    cv::KeyPoint::convert(kp2, corners2);
-
-    cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.01);
-    cv::cornerSubPix(img1, corners1, cv::Size(5, 5), cv::Size(-1, -1), criteria);
-    cv::cornerSubPix(img2, corners2, cv::Size(5, 5), cv::Size(-1, -1), criteria);
-
-    for (size_t i = 0; i < kp1.size(); i++) kp1[i].pt = corners1[i];
-    for (size_t i = 0; i < kp2.size(); i++) kp2[i].pt = corners2[i];
 
     cv::BFMatcher matcher(cv::NORM_HAMMING);
     std::vector<std::vector<cv::DMatch>> knn_12, knn_21;
@@ -206,7 +209,7 @@ int main(int argc, char** argv) {
         focal = img1.cols * 0.85;
         cv::Mat best_R, best_t;
 
-        for (double mult = 0.4; mult <= 1.5; mult += 0.05) {
+        for (double mult = 0.5; mult <= 1.4; mult += 0.1) {
             double f = img1.cols * mult;
             cv::Mat K_test = (cv::Mat_<double>(3, 3) << f, 0, cx, 0, f, cy, 0, 0, 1);
             cv::Mat mask;
@@ -266,10 +269,8 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        const double TH_H = 5.99 * 2;
-        const double TH_F = 3.84 * 2;
-        double scoreH = computeHomographyScore(pts1, pts2, H, TH_H);
-        double scoreF = computeFundamentalScore(pts1, pts2, F, TH_F);
+        double scoreH = computeHomographyScore(pts1, pts2, H, 5.99 * 2);
+        double scoreF = computeFundamentalScore(pts1, pts2, F, 3.84 * 2);
         double ratioH = scoreH / (scoreH + scoreF + 1e-10);
 
         if (ratioH > 0.45 && !H.empty()) {
@@ -287,9 +288,7 @@ int main(int argc, char** argv) {
             cv::Mat mask;
             cv::Mat E = cv::findEssentialMat(pts1, pts2, K, cv::USAC_MAGSAC, 0.999, 1.0, mask);
 
-            if (E.empty() || E.rows != 3) {
-                E = K.t() * F * K;
-            }
+            if (E.empty() || E.rows != 3) E = K.t() * F * K;
 
             std::vector<cv::Point2f> pts1_in, pts2_in;
             for (size_t i = 0; i < pts1.size(); i++) {

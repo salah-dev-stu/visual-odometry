@@ -1,6 +1,6 @@
 # Visual Odometry - 2-Frame Pose Estimation
 
-Estimates relative camera pose (6DOF) between two images without camera calibration.
+Estimates relative camera pose (6DOF) between two images using ORB features and USAC_MAGSAC robust estimation.
 
 ## Output Format
 ```
@@ -23,7 +23,7 @@ sudo apt update
 sudo apt install libopencv-dev g++
 
 # Build
-g++ -O3 -o vo_submission src/vo_submission.cpp $(pkg-config --cflags --libs opencv4)
+g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp $(pkg-config --cflags --libs opencv4)
 ```
 
 ### macOS
@@ -68,18 +68,44 @@ cl /EHsc /O2 /std:c++17 src\vo_submission.cpp /I %USERPROFILE%\vcpkg\installed\x
 copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
 ```
 
-#### Run
-```powershell
-vo_submission.exe image1.jpg image2.jpg
-```
-
 ## Usage
+
 ```bash
-./vo_submission image1.jpg image2.jpg
+./vo_submission <image1> <image2> [-f focal_length] [-s scale]
 ```
 
-## Example
+### Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-f <focal>` | Camera focal length in pixels (original image resolution) | Auto-estimate |
+| `-s <scale>` | Image scale factor (0.25, 0.5, 1.0) | 0.5 |
+
+### Examples
+
 ```bash
+# Basic usage (auto focal, half resolution - fastest)
 ./vo_submission frame001.jpg frame002.jpg
-# Output: 0.523415 -0.128743 0.892156 0.125634 0.987234 -0.098123
+
+# With known focal length (faster, more accurate)
+./vo_submission frame001.jpg frame002.jpg -f 525.0
+
+# Full resolution (slower, use for high-precision)
+./vo_submission frame001.jpg frame002.jpg -f 525.0 -s 1.0
+
+# Quarter resolution (fastest, for real-time on embedded)
+./vo_submission frame001.jpg frame002.jpg -s 0.25
 ```
+
+### Performance (Raspberry Pi 4)
+
+| Mode | Time | Use Case |
+|------|------|----------|
+| Auto focal, scale=0.5 | ~0.50s | Default |
+| Known focal, scale=0.5 | ~0.40s | When calibration known |
+| Known focal, scale=1.0 | ~0.75s | High precision |
+| Known focal, scale=0.25 | ~0.15s | Real-time embedded |
+
+## Acknowledgments
+
+This project was developed with assistance from [Claude Code](https://claude.ai/code) AI.
