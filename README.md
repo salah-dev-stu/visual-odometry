@@ -71,7 +71,7 @@ copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
 ## Usage
 
 ```bash
-./vo_submission <image1> <image2> [-f focal_length] [-s scale]
+./vo_submission <image1> <image2> [-f focal_length] [-s scale] [-m matches_file]
 ```
 
 ### Flags
@@ -80,6 +80,7 @@ copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
 |------|-------------|---------|
 | `-f <focal>` | Camera focal length in pixels (original image resolution) | Auto-estimate |
 | `-s <scale>` | Image scale factor (0.25, 0.5, 1.0) | 0.5 |
+| `-m <file>` | Output matched points to file (for visualization) | None |
 
 ### Examples
 

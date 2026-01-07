@@ -1,12 +1,13 @@
 /*
  * Visual Odometry - 2-Frame Relative Pose Estimation
- * Usage: ./vo_submission <image1> <image2> [-f focal_length] [-s scale]
+ * Usage: ./vo_submission <image1> <image2> [-f focal_length] [-s scale] [-m matches_file]
  * Output: roll pitch yaw tx ty tz (degrees, unit vector)
  */
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/features2d.hpp>
 #include <iostream>
+#include <fstream>
 #include <cmath>
 #include <unordered_map>
 #include <string>
@@ -115,7 +116,7 @@ void printZeroPose() {
 }
 
 int main(int argc, char** argv) {
-    std::string img1_path, img2_path;
+    std::string img1_path, img2_path, matches_file;
     double user_focal = -1;
     double scale = 0.5;  // Default: half resolution for speed
 
@@ -125,6 +126,8 @@ int main(int argc, char** argv) {
             user_focal = std::stod(argv[++i]);
         } else if (arg == "-s" && i + 1 < argc) {
             scale = std::stod(argv[++i]);
+        } else if (arg == "-m" && i + 1 < argc) {
+            matches_file = argv[++i];
         } else if (img1_path.empty()) {
             img1_path = arg;
         } else if (img2_path.empty()) {
@@ -196,6 +199,19 @@ int main(int argc, char** argv) {
     if (pts1.size() < 10) {
         printZeroPose();
         return 0;
+    }
+
+    // Output matches to file if requested (coordinates in original image space)
+    if (!matches_file.empty()) {
+        std::ofstream mf(matches_file);
+        if (mf.is_open()) {
+            mf << pts1.size() << std::endl;
+            for (size_t i = 0; i < pts1.size(); i++) {
+                mf << pts1[i].x / scale << " " << pts1[i].y / scale << " "
+                   << pts2[i].x / scale << " " << pts2[i].y / scale << std::endl;
+            }
+            mf.close();
+        }
     }
 
     double cx = img1.cols / 2.0, cy = img1.rows / 2.0;
@@ -324,6 +340,8 @@ int main(int argc, char** argv) {
         yaw   = 0;
     }
 
+    // t from recoverPose points from cam1 to cam2 origin
+    // For trajectory (camera motion), we need -t
     std::cout << std::fixed << std::setprecision(6)
               << roll * 180.0 / CV_PI << " "
               << pitch * 180.0 / CV_PI << " "
