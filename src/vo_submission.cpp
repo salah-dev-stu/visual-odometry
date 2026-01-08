@@ -118,7 +118,7 @@ void printZeroPose() {
 int main(int argc, char** argv) {
     std::string img1_path, img2_path, matches_file;
     double user_focal = -1;
-    double scale = 0.5;  // Default: half resolution for speed
+    double scale = -1;  // -1 means auto: full res for auto-focal, 0.5 for known focal
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -146,6 +146,11 @@ int main(int argc, char** argv) {
     if (img1_full.empty() || img2_full.empty()) {
         std::cerr << "Error: Could not load images" << std::endl;
         return 1;
+    }
+
+    // Auto-select scale: full res for auto-focal (needs more features), half for known focal
+    if (scale < 0) {
+        scale = (user_focal > 0) ? 0.5 : 1.0;
     }
 
     // Downscale for speed
@@ -266,8 +271,20 @@ int main(int argc, char** argv) {
         }
 
         if (best_score < 0 || best_R.empty()) {
-            printZeroPose();
-            return 0;
+            // Fallback: use default focal = 0.85 * image_width and try once more
+            focal = img1.cols * 0.85;
+            cv::Mat K_fallback = (cv::Mat_<double>(3, 3) << focal, 0, cx, 0, focal, cy, 0, 0, 1);
+            cv::Mat mask;
+            cv::Mat E = cv::findEssentialMat(pts1, pts2, K_fallback, cv::USAC_MAGSAC, 0.999, 1.0, mask);
+            if (E.empty() || E.rows != 3) {
+                printZeroPose();
+                return 0;
+            }
+            int inliers = cv::recoverPose(E, pts1, pts2, K_fallback, best_R, best_t, mask);
+            if (inliers < 5) {
+                printZeroPose();
+                return 0;
+            }
         }
         R = best_R;
         t = best_t;
