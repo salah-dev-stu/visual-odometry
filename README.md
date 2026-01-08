@@ -79,7 +79,7 @@ copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-f <focal>` | Camera focal length in pixels (original image resolution) | Auto-estimate |
-| `-s <scale>` | Image scale factor (0.25, 0.5, 1.0) | 0.5 |
+| `-s <scale>` | Image scale factor (0.25, 0.5, 1.0) | Auto (1.0 for auto-focal, 0.5 for known focal) |
 | `-m <file>` | Output matched points to file (for visualization) | None |
 
 ### Examples
@@ -102,7 +102,7 @@ copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
 
 | Mode | Time | Use Case |
 |------|------|----------|
-| Auto focal, scale=0.5 | ~0.50s | Default |
+| Auto focal (no flags) | ~0.75s | Default, no calibration needed |
 | Known focal, scale=0.5 | ~0.40s | When calibration known |
 | Known focal, scale=1.0 | ~0.75s | High precision |
 | Known focal, scale=0.25 | ~0.15s | Real-time embedded |
