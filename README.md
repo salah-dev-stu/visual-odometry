@@ -138,10 +138,10 @@ copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
 
 | Mode | Time | Use Case |
 |------|------|----------|
-| Auto focal (no flags) | ~0.39s | Default, no calibration needed |
-| Known focal, scale=0.5 | ~0.25s | When calibration known |
-| Known focal, scale=1.0 | ~0.50s | High precision |
-| Known focal, scale=0.25 | ~0.10s | Real-time embedded |
+| Auto focal (no flags) | ~0.55s | Default, no calibration needed |
+| Known focal, scale=0.5 | ~0.35s | When calibration known |
+| Known focal, scale=1.0 | ~0.70s | High precision |
+| Known focal, scale=0.25 | ~0.15s | Real-time embedded |
 
 ## Acknowledgments
 
