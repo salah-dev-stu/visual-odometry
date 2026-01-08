@@ -2,6 +2,9 @@
  * Visual Odometry - 2-Frame Relative Pose Estimation
  * Usage: ./vo_submission <image1> <image2> [-f focal_length] [-s scale] [-m matches_file]
  * Output: roll pitch yaw tx ty tz (degrees, unit vector)
+ *
+ * Auto-focal estimation uses CVPR 2024 iterative method from PoseLib:
+ * Kocur, Kyselica, Kukelova, "Robust Self-calibration of Focal Lengths from the Fundamental Matrix"
  */
 
 #include <opencv2/opencv.hpp>
@@ -11,6 +14,11 @@
 #include <cmath>
 #include <unordered_map>
 #include <string>
+
+// PoseLib includes for CVPR 2024 focal estimation
+#include <PoseLib/misc/decompositions.h>
+#include <PoseLib/misc/colmap_models.h>
+#include <Eigen/Dense>
 
 double computeSampsonError(const cv::Point2f& pt1, const cv::Point2f& pt2,
                            const cv::Mat& E, const cv::Mat& K_inv) {
@@ -115,10 +123,61 @@ void printZeroPose() {
     std::cout << "0.000000 0.000000 0.000000 0.000000 0.000000 1.000000" << std::endl;
 }
 
+// CVPR 2024 iterative focal length estimation using PoseLib
+double estimateFocalPoseLib(const std::vector<cv::Point2f>& pts1,
+                             const std::vector<cv::Point2f>& pts2,
+                             double cx, double cy, double initial_focal,
+                             bool debug = false) {
+    // Compute Fundamental matrix
+    cv::Mat F_cv = cv::findFundamentalMat(pts1, pts2, cv::USAC_MAGSAC, 1.0, 0.999);
+    if (F_cv.empty() || F_cv.rows != 3) {
+        if (debug) std::cerr << "F matrix estimation failed" << std::endl;
+        return initial_focal;  // Fallback to initial guess
+    }
+
+    // Convert cv::Mat to Eigen::Matrix3d
+    Eigen::Matrix3d F;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            F(i, j) = F_cv.at<double>(i, j);
+        }
+    }
+
+    // Create camera priors with initial focal estimate and principal point
+    poselib::Camera camera1_prior(poselib::SimplePinholeCameraModel::model_id,
+                                   std::vector<double>{initial_focal, cx, cy}, -1, -1);
+    poselib::Camera camera2_prior(poselib::SimplePinholeCameraModel::model_id,
+                                   std::vector<double>{initial_focal, cx, cy}, -1, -1);
+
+    // Run iterative focal estimation (max 50 iterations)
+    auto [camera1_out, camera2_out, iters] =
+        poselib::focals_from_fundamental_iterative(F, camera1_prior, camera2_prior, 50);
+
+    double f1 = camera1_out.focal();
+    double f2 = camera2_out.focal();
+
+    if (debug) {
+        std::cerr << "PoseLib focal: f1=" << f1 << " f2=" << f2
+                  << " iters=" << iters << " init=" << initial_focal << std::endl;
+    }
+
+    // Check for valid results (positive and reasonable focal lengths)
+    // More lenient bounds: focal should be > 0.1 * image_width and < 3 * image_width
+    double min_focal = initial_focal * 0.2;
+    double max_focal = initial_focal * 3.0;
+    if (f1 > min_focal && f2 > min_focal && f1 < max_focal && f2 < max_focal) {
+        // Use average of the two estimated focal lengths for same camera
+        return (f1 + f2) / 2.0;
+    }
+
+    return initial_focal;  // Fallback
+}
+
 int main(int argc, char** argv) {
     std::string img1_path, img2_path, matches_file;
     double user_focal = -1;
     double scale = -1;  // -1 means auto: full res for auto-focal, 0.5 for known focal
+    bool debug = false;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -128,6 +187,8 @@ int main(int argc, char** argv) {
             scale = std::stod(argv[++i]);
         } else if (arg == "-m" && i + 1 < argc) {
             matches_file = argv[++i];
+        } else if (arg == "-d") {
+            debug = true;
         } else if (img1_path.empty()) {
             img1_path = arg;
         } else if (img2_path.empty()) {
@@ -226,68 +287,34 @@ int main(int argc, char** argv) {
     if (user_focal > 0) {
         focal = user_focal;
     } else {
-        double best_score = -1;
-        focal = img1.cols * 0.85;
-        cv::Mat best_R, best_t;
+        // Use CVPR 2024 iterative method from PoseLib for focal estimation
+        double initial_focal = img1.cols * 0.85;  // Initial guess: typical webcam FOV
+        focal = estimateFocalPoseLib(pts1, pts2, cx, cy, initial_focal, debug);
 
-        for (double mult = 0.5; mult <= 1.4; mult += 0.1) {
-            double f = img1.cols * mult;
-            cv::Mat K_test = (cv::Mat_<double>(3, 3) << f, 0, cx, 0, f, cy, 0, 0, 1);
-            cv::Mat mask;
-            cv::Mat E = cv::findEssentialMat(pts1, pts2, K_test, cv::USAC_MAGSAC, 0.999, 1.0, mask);
+        // Estimate pose with the computed focal length
+        cv::Mat K_auto = (cv::Mat_<double>(3, 3) << focal, 0, cx, 0, focal, cy, 0, 0, 1);
+        cv::Mat mask;
+        cv::Mat E = cv::findEssentialMat(pts1, pts2, K_auto, cv::USAC_MAGSAC, 0.999, 1.0, mask);
 
-            if (E.empty() || E.rows != 3) continue;
-
-            std::vector<cv::Point2f> pts1_in, pts2_in;
-            for (size_t i = 0; i < pts1.size(); i++) {
-                if (mask.at<uchar>(i)) {
-                    pts1_in.push_back(pts1[i]);
-                    pts2_in.push_back(pts2[i]);
-                }
-            }
-            if (pts1_in.size() < 8) continue;
-
-            cv::Mat R_test, t_test;
-            int inliers = cv::recoverPose(E, pts1_in, pts2_in, K_test, R_test, t_test);
-            if (inliers < 5) continue;
-
-            cv::Mat K_inv = K_test.inv();
-            double total_err = 0;
-            int good = 0;
-            for (size_t i = 0; i < pts1_in.size(); i++) {
-                double err = computeSampsonError(pts1_in[i], pts2_in[i], E, K_inv);
-                total_err += std::min(err, 1.0);
-                if (err < 0.01) good++;
-            }
-            double score = (double)good / pts1_in.size() * 0.7 +
-                           (1.0 / (1.0 + total_err / pts1_in.size() * 10.0)) * 0.3;
-
-            if (score > best_score) {
-                best_score = score;
-                focal = f;
-                best_R = R_test.clone();
-                best_t = t_test.clone();
-            }
+        if (E.empty() || E.rows != 3) {
+            printZeroPose();
+            return 0;
         }
 
-        if (best_score < 0 || best_R.empty()) {
-            // Fallback: use default focal = 0.85 * image_width and try once more
-            focal = img1.cols * 0.85;
-            cv::Mat K_fallback = (cv::Mat_<double>(3, 3) << focal, 0, cx, 0, focal, cy, 0, 0, 1);
-            cv::Mat mask;
-            cv::Mat E = cv::findEssentialMat(pts1, pts2, K_fallback, cv::USAC_MAGSAC, 0.999, 1.0, mask);
-            if (E.empty() || E.rows != 3) {
-                printZeroPose();
-                return 0;
-            }
-            int inliers = cv::recoverPose(E, pts1, pts2, K_fallback, best_R, best_t, mask);
-            if (inliers < 5) {
-                printZeroPose();
-                return 0;
+        std::vector<cv::Point2f> pts1_in, pts2_in;
+        for (size_t i = 0; i < pts1.size(); i++) {
+            if (mask.at<uchar>(i)) {
+                pts1_in.push_back(pts1[i]);
+                pts2_in.push_back(pts2[i]);
             }
         }
-        R = best_R;
-        t = best_t;
+        if (pts1_in.size() < 5) { pts1_in = pts1; pts2_in = pts2; }
+
+        int inliers = cv::recoverPose(E, pts1_in, pts2_in, K_auto, R, t);
+        if (inliers < 5) {
+            printZeroPose();
+            return 0;
+        }
     }
 
     cv::Mat K = (cv::Mat_<double>(3, 3) << focal, 0, cx, 0, focal, cy, 0, 0, 1);
