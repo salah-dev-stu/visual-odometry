@@ -57,14 +57,15 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '962e5e39f8a25f42522f51fffc574e05a3efd26b'
-
-      - name: Install dependencies via vcpkg
+      - name: Install OpenCV via Chocolatey
         run: |
-          vcpkg install opencv4:x64-windows eigen3:x64-windows
+          choco install opencv -y
+
+      - name: Download Eigen
+        run: |
+          Invoke-WebRequest -Uri "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" -OutFile eigen.zip
+          Expand-Archive eigen.zip -DestinationPath .
+          Rename-Item eigen-3.4.0 eigen3
 
       - name: Clone and build PoseLib
         run: |
@@ -72,14 +73,14 @@ jobs:
           cd poselib_src
           mkdir build
           cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DEIGEN3_INCLUDE_DIR="${{ github.workspace }}/eigen3"
           cmake --build . --config Release
 
       - name: Build vo_submission
         run: |
           mkdir build
           cd build
-          cmake .. -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DPOSELIB_LIB=${{ github.workspace }}/poselib_src/build/PoseLib/Release/PoseLib.lib
+          cmake .. -DOpenCV_DIR="C:/tools/opencv/build" -DEIGEN3_INCLUDE_DIR="${{ github.workspace }}/eigen3"
           cmake --build . --config Release
 
       - name: Test binary runs
@@ -92,6 +93,7 @@ jobs:
         with:
           name: vo_submission-windows
           path: build/Release/vo_submission.exe
+        if: success()
 
   build-macos:
     runs-on: macos-latest
@@ -103,20 +105,20 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install opencv eigen cmake
+          brew install opencv eigen
 
       - name: Clone and build PoseLib
         run: |
           git clone https://github.com/PoseLib/PoseLib.git poselib_src
           cd poselib_src
           mkdir -p build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DEIGEN3_INCLUDE_DIR=$(brew --prefix eigen)/include/eigen3
           make -j$(sysctl -n hw.ncpu)
 
       - name: Build vo_submission
         run: |
           mkdir -p build && cd build
-          cmake ..
+          cmake .. -DEIGEN3_INCLUDE_DIR=$(brew --prefix eigen)/include/eigen3
           make -j$(sysctl -n hw.ncpu)
 
       - name: Test binary runs

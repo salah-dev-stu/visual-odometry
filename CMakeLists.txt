@@ -13,7 +13,11 @@ set(POSELIB_INCLUDE ${POSELIB_DIR})
 set(POSELIB_LIB ${POSELIB_DIR}/build/PoseLib/libPoseLib.a)
 
 add_executable(vo_submission src/vo_submission.cpp)
-target_include_directories(vo_submission PRIVATE ${POSELIB_INCLUDE} ${EIGEN3_INCLUDE_DIR})
+target_include_directories(vo_submission PRIVATE
+    ${POSELIB_INCLUDE}
+    ${EIGEN3_INCLUDE_DIR}
+    ${EIGEN3_INCLUDE_DIRS}
+)
 target_link_libraries(vo_submission ${OpenCV_LIBS} ${POSELIB_LIB})
 
 # Trajectory Viewer with Pangolin
