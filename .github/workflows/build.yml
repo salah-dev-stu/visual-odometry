@@ -61,11 +61,16 @@ jobs:
         run: |
           choco install opencv -y
 
-      - name: Download Eigen
+      - name: Download and setup Eigen
         run: |
           Invoke-WebRequest -Uri "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" -OutFile eigen.zip
           Expand-Archive eigen.zip -DestinationPath .
-          Rename-Item eigen-3.4.0 eigen3
+          mkdir eigen3_install
+          cd eigen-3.4.0
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/eigen3_install"
+          cmake --install .
 
       - name: Clone and build PoseLib
         run: |
@@ -73,14 +78,14 @@ jobs:
           cd poselib_src
           mkdir build
           cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DEIGEN3_INCLUDE_DIR="${{ github.workspace }}/eigen3"
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ github.workspace }}/eigen3_install"
           cmake --build . --config Release
 
       - name: Build vo_submission
         run: |
           mkdir build
           cd build
-          cmake .. -DOpenCV_DIR="C:/tools/opencv/build" -DEIGEN3_INCLUDE_DIR="${{ github.workspace }}/eigen3"
+          cmake .. -DOpenCV_DIR="C:/tools/opencv/build" -DCMAKE_PREFIX_PATH="${{ github.workspace }}/eigen3_install"
           cmake --build . --config Release
 
       - name: Test binary runs
