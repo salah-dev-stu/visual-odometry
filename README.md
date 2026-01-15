@@ -4,6 +4,25 @@
 
 Estimates relative camera pose (6DOF) between two images using ORB features and USAC_MAGSAC robust estimation.
 
+## Demos
+
+### Ground Truth Trajectory (Custom Dataset with ArUco Markers)
+
+| Smoothed Trajectory | Raw Trajectory with Heading |
+|:---:|:---:|
+| ![Smoothed GT](Project_in_advanced_robotics/gt_smooth_final.png) | ![Raw GT](Project_in_advanced_robotics/gt_with_heading.png) |
+
+### Demo Videos
+
+| Demo | Description |
+|------|-------------|
+| [Calibration](Project_in_advanced_robotics/calibration_demo.mp4) | Camera intrinsic calibration |
+| [ArUco Detection](Project_in_advanced_robotics/aruco_detection_demo.mp4) | Real-time marker detection |
+| [GT Pipeline](Project_in_advanced_robotics/aruco_gt_pipeline_demo.mp4) | Ground truth generation from ArUco |
+| [2D Comparison](Project_in_advanced_robotics/comparison_demo.mp4) | VO vs ground truth (2D plot) |
+| [3D Comparison](Project_in_advanced_robotics/3d_comparison_demo.mp4) | VO vs ground truth (3D view) |
+| [Dataset Results](Project_in_advanced_robotics/dataset_comparison_combined.mp4) | Combined dataset evaluation |
+
 ## Output Format
 ```
 roll pitch yaw tx ty tz
