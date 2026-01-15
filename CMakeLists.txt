@@ -10,7 +10,11 @@ find_package(Eigen3 REQUIRED)
 # PoseLib
 set(POSELIB_DIR ${CMAKE_SOURCE_DIR}/poselib_src)
 set(POSELIB_INCLUDE ${POSELIB_DIR})
-set(POSELIB_LIB ${POSELIB_DIR}/build/PoseLib/libPoseLib.a)
+if(WIN32)
+    set(POSELIB_LIB ${POSELIB_DIR}/build/PoseLib/Release/PoseLib.lib)
+else()
+    set(POSELIB_LIB ${POSELIB_DIR}/build/PoseLib/libPoseLib.a)
+endif()
 
 add_executable(vo_submission src/vo_submission.cpp)
 target_include_directories(vo_submission PRIVATE
