@@ -123,6 +123,68 @@ void printZeroPose() {
     std::cout << "0.000000 0.000000 0.000000 0.000000 0.000000 1.000000" << std::endl;
 }
 
+// Validate pose by triangulating points and checking quality (inspired by ORB-SLAM3 CheckRT)
+// Returns number of points with positive depth in both cameras and low reprojection error
+int validatePose(const cv::Mat& R, const cv::Mat& t,
+                 const std::vector<cv::Point2f>& pts1,
+                 const std::vector<cv::Point2f>& pts2,
+                 const cv::Mat& K, double reproj_thresh = 4.0) {
+    cv::Mat K_inv = K.inv();
+    cv::Mat P1 = cv::Mat::eye(3, 4, CV_64F);  // [I|0]
+    cv::Mat P2(3, 4, CV_64F);
+    R.copyTo(P2(cv::Rect(0, 0, 3, 3)));
+    t.copyTo(P2(cv::Rect(3, 0, 1, 3)));
+
+    int nGood = 0;
+    for (size_t i = 0; i < pts1.size(); i++) {
+        // Normalize points
+        cv::Mat p1_h = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
+        cv::Mat p2_h = (cv::Mat_<double>(3, 1) << pts2[i].x, pts2[i].y, 1.0);
+        cv::Mat p1_n = K_inv * p1_h;
+        cv::Mat p2_n = K_inv * p2_h;
+
+        // Triangulate using DLT
+        cv::Mat A(4, 4, CV_64F);
+        A.row(0) = p1_n.at<double>(0) * P1.row(2) - P1.row(0);
+        A.row(1) = p1_n.at<double>(1) * P1.row(2) - P1.row(1);
+        A.row(2) = p2_n.at<double>(0) * P2.row(2) - P2.row(0);
+        A.row(3) = p2_n.at<double>(1) * P2.row(2) - P2.row(1);
+
+        cv::Mat w, u, vt;
+        cv::SVD::compute(A, w, u, vt, cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
+        cv::Mat X = vt.row(3).t();
+        if (std::abs(X.at<double>(3)) < 1e-10) continue;
+        X = X / X.at<double>(3);
+        cv::Mat X3D = X.rowRange(0, 3);
+
+        // Check depth in camera 1 (must be positive)
+        double z1 = X3D.at<double>(2);
+        if (z1 <= 0) continue;
+
+        // Check depth in camera 2 (must be positive)
+        cv::Mat X3D_c2 = R * X3D + t;
+        double z2 = X3D_c2.at<double>(2);
+        if (z2 <= 0) continue;
+
+        // Check reprojection error in camera 1
+        double invZ1 = 1.0 / z1;
+        double u1 = K.at<double>(0, 0) * X3D.at<double>(0) * invZ1 + K.at<double>(0, 2);
+        double v1 = K.at<double>(1, 1) * X3D.at<double>(1) * invZ1 + K.at<double>(1, 2);
+        double err1 = (u1 - pts1[i].x) * (u1 - pts1[i].x) + (v1 - pts1[i].y) * (v1 - pts1[i].y);
+        if (err1 > reproj_thresh) continue;
+
+        // Check reprojection error in camera 2
+        double invZ2 = 1.0 / z2;
+        double u2 = K.at<double>(0, 0) * X3D_c2.at<double>(0) * invZ2 + K.at<double>(0, 2);
+        double v2 = K.at<double>(1, 1) * X3D_c2.at<double>(1) * invZ2 + K.at<double>(1, 2);
+        double err2 = (u2 - pts2[i].x) * (u2 - pts2[i].x) + (v2 - pts2[i].y) * (v2 - pts2[i].y);
+        if (err2 > reproj_thresh) continue;
+
+        nGood++;
+    }
+    return nGood;
+}
+
 // CVPR 2024 iterative focal length estimation using PoseLib
 double estimateFocalPoseLib(const std::vector<cv::Point2f>& pts1,
                              const std::vector<cv::Point2f>& pts2,
@@ -315,6 +377,14 @@ int main(int argc, char** argv) {
             printZeroPose();
             return 0;
         }
+
+        // Validate pose quality (reject if too few points pass triangulation checks)
+        int nGood = validatePose(R, t, pts1_in, pts2_in, K_auto);
+        double goodRatio = (double)nGood / pts1_in.size();
+        if (goodRatio < 0.7 || nGood < 8) {
+            printZeroPose();
+            return 0;
+        }
     }
 
     cv::Mat K = (cv::Mat_<double>(3, 3) << focal, 0, cx, 0, focal, cy, 0, 0, 1);
@@ -342,7 +412,16 @@ int main(int argc, char** argv) {
                 cv::Mat mask;
                 cv::Mat E_refined = cv::findEssentialMat(pts1, pts2, K, cv::USAC_MAGSAC, 0.999, 1.0, mask);
                 if (!E_refined.empty() && E_refined.rows == 3) E = E_refined;
+
                 cv::recoverPose(E, pts1, pts2, K, R, t);
+
+                // Validate pose quality
+                int nGood = validatePose(R, t, pts1, pts2, K);
+                double goodRatio = (double)nGood / pts1.size();
+                if (goodRatio < 0.7 || nGood < 8) {
+                    printZeroPose();
+                    return 0;
+                }
             }
         } else {
             cv::Mat mask;
@@ -361,6 +440,14 @@ int main(int argc, char** argv) {
 
             int inliers = cv::recoverPose(E, pts1_in, pts2_in, K, R, t);
             if (inliers < 5) {
+                printZeroPose();
+                return 0;
+            }
+
+            // Validate pose quality (reject if too few points pass triangulation checks)
+            int nGood = validatePose(R, t, pts1_in, pts2_in, K);
+            double goodRatio = (double)nGood / pts1_in.size();
+            if (goodRatio < 0.7 || nGood < 8) {
                 printZeroPose();
                 return 0;
             }
