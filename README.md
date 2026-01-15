@@ -1,5 +1,7 @@
 # Visual Odometry - 2-Frame Pose Estimation
 
+[![Build and Test](https://github.com/salah-dev-stu/visual-odometry/actions/workflows/build.yml/badge.svg)](https://github.com/salah-dev-stu/visual-odometry/actions/workflows/build.yml)
+
 Estimates relative camera pose (6DOF) between two images using ORB features and USAC_MAGSAC robust estimation.
 
 ## Output Format
@@ -18,90 +20,96 @@ roll pitch yaw tx ty tz
 
 ## Build Instructions
 
-### Linux (Ubuntu/Debian)
+### Linux (Ubuntu/Debian) ✓ Tested
+
 ```bash
 # Install dependencies
-sudo apt update
-sudo apt install libopencv-dev libeigen3-dev g++ cmake
+sudo apt-get update
+sudo apt-get install -y build-essential cmake libopencv-dev libeigen3-dev
 
-# Clone with PoseLib
+# Clone repository
 git clone https://github.com/salah-dev-stu/visual-odometry.git
 cd visual-odometry
-git clone https://github.com/PoseLib/PoseLib.git poselib_src
 
-# Build PoseLib
+# Clone and build PoseLib
+git clone https://github.com/PoseLib/PoseLib.git poselib_src
 cd poselib_src && mkdir -p build && cd build
-cmake .. && make -j4
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
 cd ../..
 
-# Build VO
-g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
-    -I poselib_src -I poselib_src/build/generated_headers \
-    poselib_src/build/PoseLib/libPoseLib.a \
-    $(pkg-config --cflags --libs opencv4 eigen3)
+# Build with CMake
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
 ```
 
-### macOS
+### macOS ✓ Tested
+
 ```bash
 # Install dependencies
-brew install opencv eigen cmake
+brew install opencv eigen
 
-# Clone with PoseLib
+# Clone repository
 git clone https://github.com/salah-dev-stu/visual-odometry.git
 cd visual-odometry
-git clone https://github.com/PoseLib/PoseLib.git poselib_src
 
-# Build PoseLib
+# Clone and build PoseLib
+git clone https://github.com/PoseLib/PoseLib.git poselib_src
 cd poselib_src && mkdir -p build && cd build
-cmake .. && make -j4
+cmake .. -DCMAKE_BUILD_TYPE=Release -DEIGEN3_INCLUDE_DIR=$(brew --prefix eigen)/include/eigen3
+make -j$(sysctl -n hw.ncpu)
 cd ../..
 
-# Build VO
-g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
-    -I poselib_src -I poselib_src/build/generated_headers \
-    poselib_src/build/PoseLib/libPoseLib.a \
-    $(pkg-config --cflags --libs opencv4 eigen3)
+# Build with CMake
+mkdir -p build && cd build
+cmake .. -DEIGEN3_INCLUDE_DIR=$(brew --prefix eigen)/include/eigen3
+make -j$(sysctl -n hw.ncpu)
 ```
 
-### Windows
+### Windows ✓ Tested
 
-#### Build with vcpkg
 ```powershell
-# 1. Install vcpkg (one-time setup)
-cd %USERPROFILE%
-git clone https://github.com/microsoft/vcpkg.git
-cd vcpkg
-.\bootstrap-vcpkg.bat
+# Install OpenCV via Chocolatey (run as Administrator)
+choco install opencv -y
 
-# 2. Install dependencies
-.\vcpkg install opencv4:x64-windows eigen3:x64-windows
+# Download and install Eigen
+Invoke-WebRequest -Uri "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" -OutFile eigen.zip
+Expand-Archive eigen.zip -DestinationPath .
+mkdir eigen3_install
+cd eigen-3.4.0
+mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX="$PWD/../../eigen3_install"
+cmake --install .
+cd ../..
 
-# 3. Clone project with PoseLib
-cd %USERPROFILE%
+# Clone repository
 git clone https://github.com/salah-dev-stu/visual-odometry.git
 cd visual-odometry
-git clone https://github.com/PoseLib/PoseLib.git poselib_src
 
-# 4. Build PoseLib
+# Clone and build PoseLib
+git clone https://github.com/PoseLib/PoseLib.git poselib_src
 cd poselib_src
 mkdir build && cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=%USERPROFILE%\vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/../../eigen3_install"
 cmake --build . --config Release
-cd ..\..
+cd ../..
 
-# 5. Build VO (from Developer Command Prompt)
-cl /EHsc /O2 /std:c++17 src\vo_submission.cpp ^
-    /I poselib_src /I poselib_src\build\generated_headers ^
-    /I %USERPROFILE%\vcpkg\installed\x64-windows\include ^
-    /I %USERPROFILE%\vcpkg\installed\x64-windows\include\opencv4 ^
-    /I %USERPROFILE%\vcpkg\installed\x64-windows\include\eigen3 ^
-    /link poselib_src\build\PoseLib\Release\PoseLib.lib ^
-    /LIBPATH:%USERPROFILE%\vcpkg\installed\x64-windows\lib ^
-    opencv_core4.lib opencv_imgcodecs4.lib opencv_imgproc4.lib ^
-    opencv_features2d4.lib opencv_calib3d4.lib
+# Build with CMake
+mkdir build && cd build
+cmake .. -DOpenCV_DIR="C:/tools/opencv/build" -DCMAKE_PREFIX_PATH="$PWD/../eigen3_install"
+cmake --build . --config Release
 
-# 6. Copy required DLLs
-copy %USERPROFILE%\vcpkg\installed\x64-windows\bin\*.dll .
+# Binary will be at: build/Release/vo_submission.exe
+```
+
+### Alternative: Direct Compilation (Linux/macOS)
+
+```bash
+g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
+    -I poselib_src -I poselib_src/build/generated_headers \
+    poselib_src/build/PoseLib/libPoseLib.a \
+    $(pkg-config --cflags --libs opencv4 eigen3)
 ```
 
 ## Usage
