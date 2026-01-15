@@ -32,6 +32,14 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 
 ![3D Comparison](Project_in_advanced_robotics/3d_comparison_demo.gif)
 
+**Dataset Evaluation**
+
+![Dataset Results](Project_in_advanced_robotics/dataset_comparison_combined.gif)
+
+**Matplotlib Visualization**
+
+![Matplotlib Demo](Project_in_advanced_robotics/demo_matplotlib.gif)
+
 ## Output Format
 ```
 roll pitch yaw tx ty tz
