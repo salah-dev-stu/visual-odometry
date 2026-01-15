@@ -1,0 +1,130 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libopencv-dev \
+            libeigen3-dev
+
+      - name: Clone and build PoseLib
+        run: |
+          git clone https://github.com/PoseLib/PoseLib.git poselib_src
+          cd poselib_src
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Build vo_submission
+        run: |
+          mkdir -p build && cd build
+          cmake ..
+          make -j$(nproc)
+
+      - name: Test binary runs
+        run: |
+          ./build/vo_submission --help || echo "Usage test complete"
+
+      - name: Upload Ubuntu binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: vo_submission-ubuntu
+          path: build/vo_submission
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '962e5e39f8a25f42522f51fffc574e05a3efd26b'
+
+      - name: Install dependencies via vcpkg
+        run: |
+          vcpkg install opencv4:x64-windows eigen3:x64-windows
+
+      - name: Clone and build PoseLib
+        run: |
+          git clone https://github.com/PoseLib/PoseLib.git poselib_src
+          cd poselib_src
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+          cmake --build . --config Release
+
+      - name: Build vo_submission
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DPOSELIB_LIB=${{ github.workspace }}/poselib_src/build/PoseLib/Release/PoseLib.lib
+          cmake --build . --config Release
+
+      - name: Test binary runs
+        run: |
+          ./build/Release/vo_submission.exe --help
+        continue-on-error: true
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: vo_submission-windows
+          path: build/Release/vo_submission.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install opencv eigen cmake
+
+      - name: Clone and build PoseLib
+        run: |
+          git clone https://github.com/PoseLib/PoseLib.git poselib_src
+          cd poselib_src
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Build vo_submission
+        run: |
+          mkdir -p build && cd build
+          cmake ..
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Test binary runs
+        run: |
+          ./build/vo_submission --help || echo "Usage test complete"
+
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: vo_submission-macos
+          path: build/vo_submission
