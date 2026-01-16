@@ -41,11 +41,25 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 ![Matplotlib Demo](Project_in_advanced_robotics/demo_matplotlib.gif)
 
 ## Output Format
+
+The program outputs 4 lines:
 ```
-roll pitch yaw tx ty tz
+R11 R12 R13
+R21 R22 R23
+R31 R32 R33
+tx ty tz
 ```
-- Rotation: Euler angles in degrees (ZYX convention)
-- Translation: unit vector (scale is unknown in monocular VO)
+
+- **Lines 1-3**: Rotation matrix (3x3)
+- **Line 4**: Translation vector (unit length, scale is unknown in monocular VO)
+
+### Example Output
+```
+0.999874 -0.007614 0.013932
+0.008056 0.999458 -0.031921
+-0.013681 0.032029 0.999393
+-0.227991 -0.041450 0.972781
+```
 
 ## Embedded Deployment (Yocto Linux)
 
@@ -195,25 +209,30 @@ g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
 ## Usage
 
 ```bash
-./vo_submission <image1> <image2> [-f focal_length] [-s scale] [-m matches_file]
+./vo_submission <image1> <image2> [options]
 ```
 
 ### Flags
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-f <focal>` | Camera focal length in pixels (original image resolution) | Auto-estimate |
-| `-s <scale>` | Image scale factor (0.25, 0.5, 1.0) | Auto (1.0 for auto-focal, 0.5 for known focal) |
+| `-f <focal>` | Focal length in pixels (assumes fx=fy, cx=w/2, cy=h/2) | Auto-estimate |
+| `-k <fx,fy,cx,cy>` | Full camera intrinsics matrix | None |
+| `-s <scale>` | Image scale factor (0.25, 0.5, 1.0) | Auto (1.0 for auto-focal, 0.5 for known) |
 | `-m <file>` | Output matched points to file (for visualization) | None |
+| `-d` | Debug output (prints selection metrics to stderr) | Off |
 
 ### Examples
 
 ```bash
-# Basic usage (auto focal, half resolution - fastest)
+# Basic usage (auto focal estimation)
 ./vo_submission frame001.jpg frame002.jpg
 
-# With known focal length (faster, more accurate)
+# With known focal length (assumes principal point at image center)
 ./vo_submission frame001.jpg frame002.jpg -f 525.0
+
+# With full calibration matrix (fx, fy, cx, cy)
+./vo_submission frame001.jpg frame002.jpg -k 517.3,516.5,318.6,255.3
 
 # Full resolution (slower, use for high-precision)
 ./vo_submission frame001.jpg frame002.jpg -f 525.0 -s 1.0
