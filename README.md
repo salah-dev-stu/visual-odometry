@@ -189,6 +189,50 @@ Benchmarked with 640x480 VGA images:
 | Known focal, scale=1.0 | ~0.21s | High precision |
 | Known focal, scale=0.25 | ~0.03s | Real-time embedded |
 
+## Embedded Deployment (Yocto Linux)
+
+This project was deployed and tested on a **Raspberry Pi 4 Model B** running a custom **Yocto Linux** image.
+
+**Demo: VO running on Raspberry Pi 4**
+
+https://github.com/salah-dev-stu/visual-odometry/raw/main/Project_in_advanced_robotics/pi_demo.mp4
+
+### Target Platform
+- **Hardware**: Raspberry Pi 4 Model B (2GB RAM)
+- **OS**: Yocto Linux (custom embedded image)
+- **Architecture**: ARM64 (aarch64)
+
+### Cross-Compilation Setup
+
+The binary was cross-compiled from an x86_64 host using the `aarch64-linux-gnu` toolchain:
+
+```bash
+# Cross-compile for Raspberry Pi 4
+aarch64-linux-gnu-g++ -O3 -std=c++17 -march=armv8-a+simd \
+    -o vo_submission_arm64 src/vo_submission.cpp \
+    -I poselib_src -I poselib_src/build/generated_headers \
+    poselib_src/build/PoseLib/libPoseLib.a \
+    $(pkg-config --cflags --libs opencv4 eigen3)
+```
+
+### Yocto Image Requirements
+
+The Yocto image must include:
+- OpenCV 4.x (`opencv`)
+- Eigen3 (`libeigen`)
+- Standard C++ runtime
+
+### Deployment
+
+```bash
+# Copy binary to Pi
+scp vo_submission_arm64 root@<pi-ip>:~/
+
+# Run on Pi
+ssh root@<pi-ip>
+./vo_submission_arm64 image1.jpg image2.jpg -f 525.0
+```
+
 ## Acknowledgments
 
 This project was developed with assistance from [Claude Code](https://claude.ai/code) AI.
