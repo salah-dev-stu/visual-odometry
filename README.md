@@ -195,7 +195,7 @@ This project was deployed and tested on a **Raspberry Pi 4 Model B** running a c
 
 **Demo: VO running on Raspberry Pi 4**
 
-https://github.com/salah-dev-stu/visual-odometry/raw/main/Project_in_advanced_robotics/pi_demo.mp4
+![Pi Demo](Project_in_advanced_robotics/pi_demo.gif)
 
 ### Target Platform
 - **Hardware**: Raspberry Pi 4 Model B (2GB RAM)
