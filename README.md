@@ -228,10 +228,10 @@ Benchmarked with 640x480 VGA images:
 
 | Mode | Time | Use Case |
 |------|------|----------|
-| Auto focal (no flags) | ~0.21s | Default, no calibration needed |
-| Known focal, scale=0.5 | ~0.07s | When calibration known |
-| Known focal, scale=1.0 | ~0.21s | High precision |
-| Known focal, scale=0.25 | ~0.03s | Real-time embedded |
+| Auto focal (no flags) | ~0.70s | Default, no calibration needed |
+| Known focal, scale=0.5 | ~0.32s | When calibration known |
+| Known focal, scale=1.0 | ~0.48s | High precision |
+| Known focal, scale=0.25 | ~0.25s | Real-time embedded |
 
 ## Acknowledgments
 
