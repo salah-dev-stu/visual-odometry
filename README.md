@@ -6,14 +6,6 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 
 ## Demos
 
-### Ground Truth Trajectory (Custom Dataset with ArUco Markers)
-
-| Smoothed Trajectory | Raw Trajectory with Heading |
-|:---:|:---:|
-| ![Smoothed GT](Project_in_advanced_robotics/gt_smooth_final.png) | ![Raw GT](Project_in_advanced_robotics/gt_with_heading.png) |
-
-### Demo Videos
-
 **Camera Calibration**
 
 ![Calibration](Project_in_advanced_robotics/calibration_demo.gif)
@@ -25,6 +17,10 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 **Ground Truth Pipeline**
 
 ![GT Pipeline](Project_in_advanced_robotics/aruco_gt_pipeline_demo.gif)
+
+| Smoothed Trajectory | Raw Trajectory with Heading |
+|:---:|:---:|
+| ![Smoothed GT](Project_in_advanced_robotics/gt_smooth_final.png) | ![Raw GT](Project_in_advanced_robotics/gt_with_heading.png) |
 
 **VO vs Ground Truth Comparison**
 
