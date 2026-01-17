@@ -101,6 +101,123 @@ double computeFundamentalScore(const std::vector<cv::Point2f>& pts1,
     return score;
 }
 
+// Compute median parallax angle from triangulated points
+// Returns parallax in degrees - low parallax indicates pure rotation or small baseline
+double computeMedianParallax(const cv::Mat& R, const cv::Mat& t,
+                              const std::vector<cv::Point2f>& pts1,
+                              const std::vector<cv::Point2f>& pts2,
+                              const cv::Mat& K) {
+    cv::Mat K_inv = K.inv();
+    cv::Mat P1 = cv::Mat::eye(3, 4, CV_64F);
+    cv::Mat P2(3, 4, CV_64F);
+    R.copyTo(P2(cv::Rect(0, 0, 3, 3)));
+    t.copyTo(P2(cv::Rect(3, 0, 1, 3)));
+
+    // Camera centers
+    cv::Mat O1 = cv::Mat::zeros(3, 1, CV_64F);
+    cv::Mat O2 = -R.t() * t;
+
+    std::vector<double> parallaxes;
+
+    for (size_t i = 0; i < pts1.size(); i++) {
+        cv::Mat p1_h = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
+        cv::Mat p2_h = (cv::Mat_<double>(3, 1) << pts2[i].x, pts2[i].y, 1.0);
+        cv::Mat p1_n = K_inv * p1_h;
+        cv::Mat p2_n = K_inv * p2_h;
+
+        // Triangulate
+        cv::Mat A(4, 4, CV_64F);
+        A.row(0) = p1_n.at<double>(0) * P1.row(2) - P1.row(0);
+        A.row(1) = p1_n.at<double>(1) * P1.row(2) - P1.row(1);
+        A.row(2) = p2_n.at<double>(0) * P2.row(2) - P2.row(0);
+        A.row(3) = p2_n.at<double>(1) * P2.row(2) - P2.row(1);
+
+        cv::Mat w, u, vt;
+        cv::SVD::compute(A, w, u, vt, cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
+        cv::Mat X = vt.row(3).t();
+        if (std::abs(X.at<double>(3)) < 1e-10) continue;
+        X = X / X.at<double>(3);
+        cv::Mat X3D = X.rowRange(0, 3);
+
+        // Skip points behind cameras
+        if (X3D.at<double>(2) <= 0) continue;
+        cv::Mat X3D_c2 = R * X3D + t;
+        if (X3D_c2.at<double>(2) <= 0) continue;
+
+        // Compute parallax angle (angle between rays from both cameras to 3D point)
+        cv::Mat ray1 = X3D - O1;
+        cv::Mat ray2 = X3D - O2;
+        double norm1 = cv::norm(ray1);
+        double norm2 = cv::norm(ray2);
+        if (norm1 < 1e-10 || norm2 < 1e-10) continue;
+
+        double cosParallax = ray1.dot(ray2) / (norm1 * norm2);
+        cosParallax = std::min(1.0, std::max(-1.0, cosParallax));
+        double parallaxDeg = std::acos(cosParallax) * 180.0 / CV_PI;
+        parallaxes.push_back(parallaxDeg);
+    }
+
+    if (parallaxes.empty()) return 0.0;
+    std::sort(parallaxes.begin(), parallaxes.end());
+    return parallaxes[parallaxes.size() / 2];
+}
+
+// Check if Homography is "rotation-like" (H ≈ K*R*K⁻¹ for pure rotation)
+// Returns orthogonality error - lower means more rotation-like
+double checkHomographyRotationLike(const cv::Mat& H, const cv::Mat& K) {
+    if (H.empty()) return 1e10;
+
+    cv::Mat K_inv = K.inv();
+    cv::Mat R_approx = K_inv * H * K;
+
+    // Normalize by determinant to remove scale
+    double det = cv::determinant(R_approx);
+    if (std::abs(det) < 1e-10) return 1e10;
+    if (det < 0) det = -det;
+    double scale = std::pow(det, 1.0/3.0);
+    R_approx = R_approx / scale;
+
+    // Check how close to orthogonal: ||R^T * R - I||
+    cv::Mat RtR = R_approx.t() * R_approx;
+    return cv::norm(RtR - cv::Mat::eye(3, 3, CV_64F));
+}
+
+// Extract rotation from Homography for pure rotation case
+// For pure rotation: H = K * R * K^(-1), so R = K^(-1) * H * K
+bool extractRotationFromHomography(const cv::Mat& H, const cv::Mat& K, cv::Mat& R_out) {
+    if (H.empty()) return false;
+
+    cv::Mat K_inv = K.inv();
+    cv::Mat R_approx = K_inv * H * K;
+
+    // Check if R_approx is close to a valid rotation matrix
+    // A valid rotation has det(R) = 1 and R^T * R = I
+    double det = cv::determinant(R_approx);
+    if (det < 0) {
+        R_approx = -R_approx;
+        det = -det;
+    }
+
+    // Normalize to ensure det = 1 (handle scale in H)
+    double scale = std::pow(det, 1.0/3.0);
+    R_approx = R_approx / scale;
+
+    // Force orthogonality using SVD: R = U * V^T
+    cv::Mat w, u, vt;
+    cv::SVD::compute(R_approx, w, u, vt);
+    R_out = u * vt;
+
+    // Verify it's a proper rotation (det = 1, not -1)
+    if (cv::determinant(R_out) < 0) {
+        R_out = -R_out;
+    }
+
+    // Check orthogonality error
+    cv::Mat I = R_out * R_out.t();
+    double ortho_err = cv::norm(I - cv::Mat::eye(3, 3, CV_64F));
+    return ortho_err < 0.1;  // Allow small error
+}
+
 bool selectBestHomographyPose(const std::vector<cv::Point2f>& pts1,
                                const std::vector<cv::Point2f>& pts2,
                                const cv::Mat& K,
@@ -572,6 +689,66 @@ int main(int argc, char** argv) {
         }
         if (debug) std::cerr << "Depth CV (std/median): " << depth_cv << std::endl;
 
+        // === PURE ROTATION DETECTION ===
+        // Detect pure rotation: H explains motion well + very low parallax + E gives unreliable translation
+        // When detected, extract rotation from H and set translation to zero
+        double median_parallax = 0.0;
+        bool pure_rotation_detected = false;
+
+        if (E_valid && !R_E.empty() && !t_E.empty()) {
+            median_parallax = computeMedianParallax(R_E, t_E, pts1, pts2, K);
+            if (debug) std::cerr << "Median parallax: " << median_parallax << "°" << std::endl;
+
+            // Pure rotation criteria:
+            // 1. Homography explains motion well (ratioH > 0.55)
+            // 2. Very low parallax (< 1.0°)
+            // 3. H is very rotation-like (ortho error < 0.02) - stricter threshold
+            // 4. H-decomposed translation is near-zero
+            double H_ortho_err = checkHomographyRotationLike(H, K);
+            bool H_very_rotation_like = (H_ortho_err < 0.02);
+            bool low_parallax = (median_parallax < 1.0);
+
+            // Check H-decomposed translation magnitude
+            double H_t_norm = 0.0;
+            if (H_decomp_ok && !t_H.empty()) {
+                H_t_norm = cv::norm(t_H);
+            }
+
+            if (debug) {
+                std::cerr << "H orthogonality error: " << H_ortho_err
+                          << " (very rotation-like: " << (H_very_rotation_like ? "yes" : "no") << ")" << std::endl;
+                std::cerr << "H-decomposed t norm: " << H_t_norm << std::endl;
+            }
+
+            // Pure rotation if: very rotation-like H OR (low parallax AND poor E validation)
+            if (ratioH > 0.55 && low_parallax && H_very_rotation_like) {
+                pure_rotation_detected = true;
+                if (debug) std::cerr << "PURE ROTATION DETECTED: ratioH=" << ratioH
+                                     << " parallax=" << median_parallax << "° H_ortho=" << H_ortho_err
+                                     << " goodRatio_E=" << goodRatio_E << std::endl;
+            }
+        }
+
+        // If pure rotation, try to extract R from Homography and set t=0
+        if (pure_rotation_detected && !H.empty()) {
+            cv::Mat R_pure;
+            if (extractRotationFromHomography(H, K, R_pure)) {
+                R = R_pure.clone();
+                t = cv::Mat::zeros(3, 1, CV_64F);
+                if (debug) std::cerr << "Using Homography-derived rotation with zero translation" << std::endl;
+
+                // Output and return early
+                std::cout << std::fixed << std::setprecision(6);
+                std::cout << R.at<double>(0,0) << " " << R.at<double>(0,1) << " " << R.at<double>(0,2) << std::endl;
+                std::cout << R.at<double>(1,0) << " " << R.at<double>(1,1) << " " << R.at<double>(1,2) << std::endl;
+                std::cout << R.at<double>(2,0) << " " << R.at<double>(2,1) << " " << R.at<double>(2,2) << std::endl;
+                std::cout << "0.000000 0.000000 0.000000" << std::endl;
+                return 0;
+            } else if (debug) {
+                std::cerr << "Failed to extract rotation from H, falling back to normal selection" << std::endl;
+            }
+        }
+
         // Selection logic using depth variance and direction agreement
         // Key insight: depth variance distinguishes 3D (trust E) from planar (trust H) scenes
         // Direction agreement determines confidence in the selection
@@ -583,8 +760,8 @@ int main(int argc, char** argv) {
                 // High depth variance suggests 3D scene - trust E
                 useH = false;
                 if (debug) std::cerr << "Selection: E-H disagree, HIGH depth_cv=" << depth_cv << " -> E (3D scene)" << std::endl;
-            } else if (H_decomp_ok) {
-                // Low depth variance suggests planar scene - trust H
+            } else if (H_valid) {
+                // Low depth variance suggests planar scene - trust H (only if H is valid)
                 useH = true;
                 if (debug) std::cerr << "Selection: E-H disagree, LOW depth_cv=" << depth_cv << " -> H (planar scene)" << std::endl;
             } else if (E_valid) {
@@ -599,14 +776,14 @@ int main(int argc, char** argv) {
             if (E_valid) {
                 useH = false;
                 if (debug) std::cerr << "Selection: E-H strongly agree (cos=" << direction_agreement << ") -> E" << std::endl;
-            } else if (H_decomp_ok) {
+            } else if (H_valid) {
                 useH = true;
                 if (debug) std::cerr << "Selection: E-H agree but E invalid -> H" << std::endl;
             }
         }
         // Moderate agreement (0.5-0.9, or 25-60° angle)
         // Use depth variance as primary signal
-        else if (E_valid && H_decomp_ok) {
+        else if (E_valid && H_valid) {
             if (depth_cv > 0.5) {
                 // High depth variance: 3D scene, prefer E
                 useH = false;
@@ -632,7 +809,7 @@ int main(int argc, char** argv) {
             if (debug) std::cerr << "Selection: only E valid -> E" << std::endl;
         }
         // Only H is valid
-        else if (H_decomp_ok) {
+        else if (H_valid) {
             useH = true;
             if (debug) std::cerr << "Selection: only H valid -> H" << std::endl;
         }

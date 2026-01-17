@@ -11,6 +11,7 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 3. **Pose Estimation**:
    - With calibration: Smart selection between Essential matrix (3D scenes) and Homography (planar scenes)
    - Without calibration: Auto-focal estimation using CVPR 2024 iterative method from PoseLib
+   - Pure rotation detection: When camera rotates without translation, outputs rotation-only pose
 4. **Validation**: Triangulation with cheirality and reprojection error checks
 
 For detailed algorithm documentation, see [ALGORITHM.md](ALGORITHM.md).

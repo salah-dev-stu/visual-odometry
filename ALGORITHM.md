@@ -89,7 +89,25 @@ The key challenge is selecting between Essential (better for 3D scenes) and Homo
 
 3. **Validation Thresholds**:
    - Essential: ≥70% of points pass triangulation checks
-   - Homography: ≥25% of points pass triangulation checks
+   - Homography: ≥25% of points pass triangulation checks (must pass validation to be selected)
+
+### 3.4 Pure Rotation Detection
+
+When the camera rotates without translation, the Essential matrix becomes degenerate. We detect this case using:
+
+1. **Homography Orthogonality Check**: For pure rotation, H = K·R·K⁻¹, so R = K⁻¹·H·K should be orthogonal
+   - Compute `R_approx = K⁻¹ * H * K`
+   - Normalize by determinant: `R_approx = R_approx / det(R_approx)^(1/3)`
+   - Check orthogonality: `error = ||R^T * R - I||`
+   - If error < 0.02: H is "very rotation-like"
+
+2. **Low Parallax**: Median parallax angle from triangulated points < 1.0°
+
+3. **H Dominance**: ratioH > 0.55 (Homography explains motion well)
+
+When all three conditions are met:
+- Extract rotation directly from H: `R = K⁻¹ * H * K`, then force orthogonality via SVD
+- Output zero translation (pure rotation has no translation component)
 
 ## 4. Pose Validation
 
@@ -137,7 +155,7 @@ tx ty tz       ← Translation vector (unit length)
 
 4. **Drift**: Errors accumulate over long sequences due to the above limitations.
 
-5. **Pure Rotation**: When the camera only rotates (no translation), the Essential matrix becomes degenerate. The code handles this by falling back to Homography.
+5. **Pure Rotation**: When the camera only rotates (no translation), the Essential matrix becomes degenerate. The code detects this using Homography orthogonality checks and outputs rotation-only pose with zero translation (see Section 3.4).
 
 ## References
 
