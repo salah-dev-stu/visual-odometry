@@ -17,6 +17,8 @@ For detailed algorithm documentation, see [ALGORITHM.md](ALGORITHM.md).
 
 ## Demos
 
+The trajectory visualizations and demo videos below were created with separate Python scripts that call the VO binary on consecutive frame pairs and accumulate the poses.
+
 **Camera Calibration**
 
 Camera intrinsic calibration using an 8x5 checkerboard pattern. Extracts focal length (fx, fy) and principal point (cx, cy) from multiple views.
