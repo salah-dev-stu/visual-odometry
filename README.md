@@ -32,6 +32,10 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 
 ![3D Comparison](Project_in_advanced_robotics/3d_comparison_demo.gif)
 
+**TUM fr1/360 - Full Rotation 3D Trajectory**
+
+![TUM 360 3D](Project_in_advanced_robotics/tum360_3d_comparison.gif)
+
 **Dataset Evaluation**
 
 ![Dataset Results](Project_in_advanced_robotics/dataset_comparison_combined.gif)
