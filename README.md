@@ -8,15 +8,23 @@ Estimates relative camera pose (6DOF) between two images using ORB features and 
 
 **Camera Calibration**
 
+Camera intrinsic calibration using an 8x5 checkerboard pattern. Extracts focal length (fx, fy) and principal point (cx, cy) from multiple views.
+
 ![Calibration](Project_in_advanced_robotics/calibration_demo.gif)
 
 **ArUco Marker Detection**
+
+Detecting ArUco markers (6x6 dictionary) to establish ground truth camera positions. The minimap (bottom-right) shows real-time camera location within the room layout as markers are detected.
 
 ![ArUco Detection](Project_in_advanced_robotics/aruco_detection_demo.gif)
 
 **Ground Truth Pipeline**
 
+Shows how the ground truth trajectory was corrected and spikes were removed through filtering and smoothing.
+
 ![GT Pipeline](Project_in_advanced_robotics/aruco_gt_pipeline_demo.gif)
+
+Results:
 
 | Smoothed Trajectory | Raw Trajectory with Heading |
 |:---:|:---:|
