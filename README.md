@@ -32,19 +32,29 @@ Results:
 
 **VO vs Ground Truth Comparison**
 
+Top-down view comparing VO trajectory (blue) against ground truth (green) on the custom dataset.
+
 ![2D Comparison](Project_in_advanced_robotics/comparison_demo.gif)
+
+Same comparison in 3D with rotating view (Pangolin visualization).
 
 ![3D Comparison](Project_in_advanced_robotics/3d_comparison_demo.gif)
 
 **TUM fr1/360 - Full Rotation 3D Trajectory**
 
+Full 360° rotation from TUM dataset. VO trajectory shows direction errors and drift - expected limitations of 2-frame monocular VO without loop closure or bundle adjustment.
+
 ![TUM 360 3D](Project_in_advanced_robotics/tum360_3d_comparison.gif)
 
 **Dataset Evaluation**
 
+VO tested on 4 datasets: TUM RGB-D, ICL-NUIM, AGZ Zurich, and custom ArUco dataset. 2D trajectory comparisons show VO (blue) vs ground truth (green). Same limitations apply - drift and direction errors without loop closure or bundle adjustment.
+
 ![Dataset Results](Project_in_advanced_robotics/dataset_comparison_combined.gif)
 
 **Matplotlib Visualization**
+
+Same custom dataset comparison as above, using Matplotlib instead of Pangolin for 3D visualization.
 
 ![Matplotlib Demo](Project_in_advanced_robotics/demo_matplotlib.gif)
 
@@ -75,6 +85,8 @@ This project was deployed and tested on a **Raspberry Pi 4 Model B** running a c
 
 **Demo: VO running on Raspberry Pi 4**
 
+Proof of execution on embedded hardware. The binary runs on a custom Yocto Linux image with OpenCV and Eigen.
+
 ![Pi Demo](Project_in_advanced_robotics/pi_demo.gif)
 
 ### Target Platform
@@ -84,10 +96,10 @@ This project was deployed and tested on a **Raspberry Pi 4 Model B** running a c
 
 ### Cross-Compilation Setup
 
-The binary was cross-compiled from an x86_64 host using the `aarch64-linux-gnu` toolchain:
+The binary was cross-compiled from an x86_64 host using the `aarch64-linux-gnu` toolchain. Requires a cross-compilation sysroot with ARM64 OpenCV and Eigen libraries.
 
 ```bash
-# Cross-compile for Raspberry Pi 4
+# Cross-compile for Raspberry Pi 4 (requires ARM64 sysroot)
 aarch64-linux-gnu-g++ -O3 -std=c++17 -march=armv8-a+simd \
     -o vo_submission_arm64 src/vo_submission.cpp \
     -I poselib_src -I poselib_src/build/generated_headers \
@@ -117,7 +129,7 @@ ssh root@<pi-ip>
 
 - OpenCV 4.x
 - Eigen3
-- PoseLib (included as submodule)
+- PoseLib (cloned during build)
 - C++17 compiler
 
 ## Build Instructions
