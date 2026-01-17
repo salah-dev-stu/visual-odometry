@@ -212,6 +212,9 @@ cmake --build . --config Release
 cd ../..
 
 # Build with CMake
+# Note: OpenCV_DIR path depends on your installation. Common locations:
+#   Chocolatey: C:/tools/opencv/build
+#   Manual install: C:/opencv/build
 mkdir build && cd build
 cmake .. -DOpenCV_DIR="C:/tools/opencv/build" -DCMAKE_PREFIX_PATH="$PWD/../eigen3_install"
 cmake --build . --config Release
