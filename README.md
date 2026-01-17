@@ -183,6 +183,8 @@ make -j$(sysctl -n hw.ncpu)
 
 ### Windows ✓ Tested
 
+**Prerequisites**: Visual Studio 2019/2022 or MSVC Build Tools
+
 ```powershell
 # Install OpenCV via Chocolatey (run as Administrator)
 choco install opencv -y
