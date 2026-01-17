@@ -4,6 +4,17 @@
 
 Estimates relative camera pose (6DOF) between two images using ORB features and USAC_MAGSAC robust estimation.
 
+## How It Works
+
+1. **Feature Detection**: ORB features extracted from both images
+2. **Matching**: Brute-force matching with ratio test and cross-check
+3. **Pose Estimation**:
+   - With calibration: Smart selection between Essential matrix (3D scenes) and Homography (planar scenes)
+   - Without calibration: Auto-focal estimation using CVPR 2024 iterative method from PoseLib
+4. **Validation**: Triangulation with cheirality and reprojection error checks
+
+For detailed algorithm documentation, see [ALGORITHM.md](ALGORITHM.md).
+
 ## Demos
 
 **Camera Calibration**
