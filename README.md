@@ -28,7 +28,7 @@ For detailed algorithm documentation, see [ALGORITHM.md](ALGORITHM.md).
 
 ## Demos
 
-The trajectory visualizations and demo videos below were created with separate Python scripts that call the VO binary on consecutive frame pairs and accumulate the poses.
+The trajectory visualizations and demo videos below were created using the classical ORB frontend (`vo_submission`). The neural frontend (`vo_neural`) produces improved results (see benchmark table below) but the demos have not been re-generated with it.
 
 **Camera Calibration**
 
