@@ -1,18 +1,24 @@
 # Visual Odometry - 2-Frame Pose Estimation
 
-[![Build and Test](https://github.com/salah-dev-stu/visual-odometry/actions/workflows/build.yml/badge.svg)](https://github.com/salah-dev-stu/visual-odometry/actions/workflows/build.yml)
+[![Build and Test](https://github.com/salah-dev-stu/visual-odometry/actions/workflows/build.yml/badge.svg)](https://github.com/salah-dev-stu/visual-odometry/actions/workflows/build.yml) (builds `vo_submission`)
 
-Estimates relative camera pose (6DOF) between two images using ORB features and USAC_MAGSAC robust estimation.
+Estimates relative camera pose (6DOF) between two images. Two frontends are available:
+
+- **`vo_submission`** — Classical pipeline using ORB features + brute-force matching
+- **`vo_neural`** — Neural pipeline using SuperPoint + LightGlue via ONNX Runtime (optional GPU)
+
+Both share the same geometry backend (E/H selection, pure rotation detection, USAC_MAGSAC).
 
 ## How It Works
 
-1. **Feature Detection**: ORB features extracted from both images
-2. **Matching**: Brute-force matching with ratio test and cross-check
-3. **Pose Estimation**:
+1. **Feature Detection & Matching**:
+   - *Classical*: ORB features with brute-force Hamming matching, ratio test, and cross-check
+   - *Neural*: SuperPoint keypoint extraction + LightGlue attention-based matching (ONNX)
+2. **Pose Estimation**:
    - With calibration: Smart selection between Essential matrix (3D scenes) and Homography (planar scenes)
    - Without calibration: Auto-focal estimation using CVPR 2024 iterative method from PoseLib
    - Pure rotation detection: When camera rotates without translation, outputs rotation-only pose
-4. **Validation**: Triangulation with cheirality and reprojection error checks
+3. **Validation**: Triangulation with cheirality and reprojection error checks
 
 For detailed algorithm documentation, see [ALGORITHM.md](ALGORITHM.md).
 
@@ -95,11 +101,11 @@ tx ty tz
 
 ## Embedded Deployment (Yocto Linux)
 
-This project was deployed and tested on a **Raspberry Pi 4 Model B** running a custom **Yocto Linux** image.
+The classical ORB pipeline (`vo_submission`) was deployed and tested on a **Raspberry Pi 4 Model B** running a custom **Yocto Linux** image. The neural frontend is not used here — it requires ONNX Runtime which is not available on the embedded target.
 
 **Demo: VO running on Raspberry Pi 4**
 
-Proof of execution on embedded hardware. The binary runs on a custom Yocto Linux image with OpenCV and Eigen.
+Proof of execution on embedded hardware. The ORB binary runs on a custom Yocto Linux image with OpenCV and Eigen.
 
 ![Pi Demo](Project_in_advanced_robotics/pi_demo.gif)
 
@@ -145,8 +151,12 @@ ssh root@<pi-ip>
 - Eigen3
 - PoseLib (cloned during build)
 - C++17 compiler
+- ONNX Runtime 1.17+ (optional, for `vo_neural`)
+- NVIDIA GPU + cuDNN 8 (optional, for GPU-accelerated neural inference)
 
 ## Build Instructions
+
+The standard build produces `vo_submission` (ORB). The neural binary `vo_neural` is optional and only built when ONNX Runtime is detected (see the optional step in the Linux section).
 
 ### Linux (Ubuntu/Debian) ✓ Tested
 
@@ -166,11 +176,17 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 cd ../..
 
+# (Optional) Download ONNX models and runtime for neural VO
+bash scripts/download_models.sh        # CPU only
+bash scripts/download_models.sh --gpu  # With GPU support
+
 # Build with CMake
 mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
 ```
+
+The build system auto-detects ONNX Runtime. If found in `onnxruntime/`, `vo_neural` is built alongside `vo_submission`. If ONNX Runtime includes CUDA provider libraries, GPU acceleration is enabled automatically.
 
 ### macOS ✓ Tested
 
@@ -247,11 +263,11 @@ g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
 
 ## Usage
 
+### Classical (ORB)
+
 ```bash
 ./vo_submission <image1> <image2> [options]
 ```
-
-### Flags
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -261,28 +277,55 @@ g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
 | `-m <file>` | Output matched points to file (for visualization) | None |
 | `-d` | Debug output (prints selection metrics to stderr) | Off |
 
+### Neural (SuperPoint + LightGlue)
+
+```bash
+./vo_neural <image1> <image2> [options]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-f <focal>` | Focal length in pixels | Auto-estimate |
+| `-k <fx,fy,cx,cy>` | Full camera intrinsics matrix | None |
+| `-M <models_dir>` | Path to ONNX models directory | `models/` |
+| `-d` | Debug output | Off |
+
+Both binaries produce identical output format (3x3 rotation matrix + translation vector).
+
 ### Examples
 
 ```bash
-# Basic usage (auto focal estimation)
+# Classical VO - auto focal estimation
 ./vo_submission frame001.jpg frame002.jpg
 
-# With known focal length (assumes principal point at image center)
-./vo_submission frame001.jpg frame002.jpg -f 525.0
-
-# With full calibration matrix (fx, fy, cx, cy)
+# Classical VO - with full calibration
 ./vo_submission frame001.jpg frame002.jpg -k 517.3,516.5,318.6,255.3
 
-# Full resolution (slower, use for high-precision)
-./vo_submission frame001.jpg frame002.jpg -f 525.0 -s 1.0
+# Neural VO - with calibration
+./vo_neural frame001.jpg frame002.jpg -k 517.3,516.5,318.6,255.3
 
-# Quarter resolution (fastest, for real-time on embedded)
-./vo_submission frame001.jpg frame002.jpg -s 0.25
+# Neural VO - custom model directory
+./vo_neural frame001.jpg frame002.jpg -k 517.3,516.5,318.6,255.3 -M /path/to/models
 ```
+
+### Benchmark Comparison (ORB vs Neural)
+
+Evaluated on three datasets with known ground truth:
+
+| Dataset | Frontend | Rotation Error (mean) | Translation Error (mean) | Trans < 30° |
+|---------|----------|-----------------------|--------------------------|-------------|
+| TUM fr1/xyz | ORB | 5.79° | 28.23° | 56.8% |
+| TUM fr1/xyz | Neural | 5.66° | 13.94° | 87.5% |
+| AGZ Zurich | ORB | 2.63° | 39.08° | 34.0% |
+| AGZ Zurich | Neural | 2.10° | 25.03° | 79.0% |
+| Custom (ArUco) | ORB | 1.26° | 34.05° | 42.0% |
+| Custom (ArUco) | Neural | 1.11° | 38.97° | 37.7% |
+
+Neural matching improves translation accuracy on most datasets due to higher-quality correspondences. The custom dataset is an exception — its small baseline motions expose degenerate geometry that affects both frontends.
 
 ### Performance (Raspberry Pi 4)
 
-Benchmarked with 640x480 VGA images:
+Benchmarked with 640x480 VGA images (ORB only — neural requires ONNX Runtime):
 
 | Mode | Time | Use Case |
 |------|------|----------|

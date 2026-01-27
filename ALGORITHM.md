@@ -1,44 +1,47 @@
 # Algorithm Documentation
 
-Technical details of the 2-frame visual odometry implementation.
+Technical details of the 2-frame visual odometry implementation. The system has two frontends (ORB or SuperPoint+LightGlue) sharing a common geometry backend.
 
 ## Pipeline Overview
 
 ```
-Input Images → Downscale → ORB Detection → Feature Matching → Pose Estimation → Output R,t
-                              ↓                   ↓
-                         2000/1000/500        Ratio Test +
-                          features            Cross-Check
-                                                  ↓
-                                    ┌─────────────┴─────────────┐
-                                    ↓                           ↓
-                              Known Focal                  Auto-Focal
-                                    ↓                           ↓
-                              H/E Selection            PoseLib CVPR'24
-                                    ↓                     Estimation
-                              Best Pose                       ↓
-                                    └───────────┬─────────────┘
-                                                ↓
-                                           Validation
-                                                ↓
-                                         Output R, t
+                    ┌─── ORB Frontend (vo_submission) ───┐
+                    │  Downscale → ORB → BF + Ratio Test │
+                    │              + Cross-Check          │
+Input Images ───────┤                                     ├──→ Geometry Backend → Output R,t
+                    │                                     │
+                    ├─── Neural Frontend (vo_neural) ─────┤
+                    │  SuperPoint (ONNX) → LightGlue      │
+                    │  (ONNX) → Matched Points            │
+                    └─────────────────────────────────────┘
+
+Geometry Backend:
+    Matched Points ──→ Known Focal? ──→ H/E Selection ──→ Validation ──→ Output R,t
+                              │
+                              └──→ Auto-Focal (PoseLib CVPR'24) ──→ E path only
 ```
 
 ## 1. Feature Detection and Matching
 
-### ORB Features
+### 1a. ORB Frontend (`vo_submission`)
+
 - **Detector**: OpenCV ORB (Oriented FAST and Rotated BRIEF)
-- **Feature count**: Scales with image resolution
-  - Full resolution (scale=1.0): 2000 features
-  - Half resolution (scale=0.5): 1000 features
-  - Quarter resolution (scale=0.25): 500 features
-
-### Matching Strategy
-- **Matcher**: Brute-force with Hamming distance (for binary ORB descriptors)
+- **Feature count**: Scales with image resolution (2000 / 1000 / 500)
+- **Matcher**: Brute-force with Hamming distance
 - **Lowe's Ratio Test**: Keep matches where `best_distance < 0.75 * second_best_distance`
-- **Cross-Check**: Match from image1→image2 and image2→image1, keep only mutual matches
+- **Cross-Check**: Match bidirectionally, keep only mutual matches
+- Rejects ~90% of false matches
 
-This combination rejects ~90% of false matches, leaving high-quality correspondences.
+### 1b. Neural Frontend (`vo_neural`)
+
+- **Detector**: SuperPoint (ONNX, 256-dim descriptors)
+  - Input resized to 1024px longest edge, padded to multiple of 8
+  - Keypoints capped at 2048 (top by score) to limit GPU memory
+  - Outputs mapped back to original image coordinates
+- **Matcher**: LightGlue (ONNX, attention-based)
+  - Keypoints normalized to [-1, 1] before matching
+  - GPU inference with automatic CPU fallback on OOM
+- Produces fewer but more accurate correspondences than ORB
 
 ## 2. Auto-Focal Estimation (No Calibration Mode)
 
@@ -93,21 +96,19 @@ The key challenge is selecting between Essential (better for 3D scenes) and Homo
 
 ### 3.4 Pure Rotation Detection
 
-When the camera rotates without translation, the Essential matrix becomes degenerate. We detect this case using:
+When the camera rotates without translation, the Essential matrix becomes degenerate. Two detection paths:
 
-1. **Homography Orthogonality Check**: For pure rotation, H = K·R·K⁻¹, so R = K⁻¹·H·K should be orthogonal
-   - Compute `R_approx = K⁻¹ * H * K`
-   - Normalize by determinant: `R_approx = R_approx / det(R_approx)^(1/3)`
-   - Check orthogonality: `error = ||R^T * R - I||`
-   - If error < 0.02: H is "very rotation-like"
+**Path A (E valid but degenerate):**
+1. **H Orthogonality Check**: `R_approx = K⁻¹ * H * K`, normalize by `det^(1/3)`, check `||R^T R - I|| < 0.02`
+2. **Low Parallax**: Median parallax from triangulated points < 1.0°
+3. **H Dominance**: ratioH > 0.55
 
-2. **Low Parallax**: Median parallax angle from triangulated points < 1.0°
+**Path B (E completely failed):**
+When `recoverPose` returns 0 inliers despite many matches (common with precise neural matches on small-baseline pairs), check if H is rotation-like with a relaxed threshold (`||R^T R - I|| < 0.05`).
 
-3. **H Dominance**: ratioH > 0.55 (Homography explains motion well)
-
-When all three conditions are met:
-- Extract rotation directly from H: `R = K⁻¹ * H * K`, then force orthogonality via SVD
-- Output zero translation (pure rotation has no translation component)
+When detected:
+- Extract rotation from H via SVD orthogonalization
+- Output zero translation
 
 ## 4. Pose Validation
 
@@ -155,7 +156,7 @@ tx ty tz       ← Translation vector (unit length)
 
 4. **Drift**: Errors accumulate over long sequences due to the above limitations.
 
-5. **Pure Rotation**: When the camera only rotates (no translation), the Essential matrix becomes degenerate. The code detects this using Homography orthogonality checks and outputs rotation-only pose with zero translation (see Section 3.4).
+5. **Pure Rotation**: When the camera only rotates (no translation), the Essential matrix becomes degenerate. Detected via Homography orthogonality checks and handled by extracting rotation from H (see Section 3.4).
 
 ## References
 
@@ -166,3 +167,7 @@ tx ty tz       ← Translation vector (unit length)
 3. Barath et al. "MAGSAC: Marginalizing Sample Consensus." CVPR 2019.
 
 4. Hartley, Zisserman. "Multiple View Geometry in Computer Vision." Cambridge University Press.
+
+5. DeTone, Malisiewicz, Rabinovich. "SuperPoint: Self-Supervised Interest Point Detection and Description." CVPR 2018 Workshop.
+
+6. Lindenberger, Sarlin, Pollefeys. "LightGlue: Local Feature Matching at Light Speed." ICCV 2023.
