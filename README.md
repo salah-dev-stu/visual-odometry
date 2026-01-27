@@ -93,7 +93,7 @@ tx ty tz
 ```
 
 - **Lines 1-3**: Rotation matrix (3x3)
-- **Line 4**: Translation vector (unit length, scale is unknown in monocular VO)
+- **Line 4**: Translation vector. With depth estimation (neural pipeline), translation has scale (6DOF). Without depth (classical pipeline or fallback), translation is unit length (5DOF).
 
 ### Example Output
 ```

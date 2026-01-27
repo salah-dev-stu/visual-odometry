@@ -610,14 +610,9 @@ int main(int argc, char** argv) {
                 pose = vo_geometry::estimatePosePnP(pts1, pts2, depth_map, config);
                 if (pose.valid) {
                     used_pnp = true;
-                    double t_norm = cv::norm(pose.t);
-                    // Normalize translation to unit length for consistent output
-                    // (relative depth gives arbitrary scale)
-                    if (t_norm > 1e-6) {
-                        pose.t = pose.t / t_norm;
-                    }
                     if (debug || depth_debug) {
-                        std::cerr << "Pose method: PnP (depth-based, |t| before norm=" << t_norm << ")" << std::endl;
+                        double t_norm = cv::norm(pose.t);
+                        std::cerr << "Pose method: PnP (depth-based, 6DOF, |t|=" << t_norm << ")" << std::endl;
                     }
                 } else if (debug || depth_debug) {
                     std::cerr << "PnP failed, falling back to E/H" << std::endl;
