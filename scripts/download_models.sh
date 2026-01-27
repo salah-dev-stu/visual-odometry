@@ -27,6 +27,16 @@ else
     echo "superpoint_lightglue.onnx already exists, skipping."
 fi
 
+# Depth Anything V2 ViT-S (~101 MB) from fabio-sim/Depth-Anything-ONNX v2.0.0
+DEPTH_ONNX_BASE="https://github.com/fabio-sim/Depth-Anything-ONNX/releases/download/v2.0.0"
+
+if [ ! -f "$MODELS_DIR/depth_anything_v2_vits.onnx" ] || [ "$(wc -c < "$MODELS_DIR/depth_anything_v2_vits.onnx")" -lt 1000 ]; then
+    echo "Downloading depth_anything_v2_vits.onnx (~101 MB)..."
+    curl -L "$DEPTH_ONNX_BASE/depth_anything_v2_vits.onnx" -o "$MODELS_DIR/depth_anything_v2_vits.onnx"
+else
+    echo "depth_anything_v2_vits.onnx already exists, skipping."
+fi
+
 # ─── ONNX Runtime SDK ────────────────────────────────────────────────────────
 ORT_VERSION="1.17.1"
 ORT_DIR="$PROJECT_DIR/onnxruntime"

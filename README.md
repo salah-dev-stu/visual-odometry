@@ -5,20 +5,24 @@
 Estimates relative camera pose (6DOF) between two images. Two frontends are available:
 
 - **`vo_submission`** — Classical pipeline using ORB features + brute-force matching
-- **`vo_neural`** — Neural pipeline using SuperPoint + LightGlue via ONNX Runtime (optional GPU)
+- **`vo_neural`** — Neural pipeline using SuperPoint + LightGlue + Depth Anything V2 via ONNX Runtime (optional GPU). Uses monocular depth estimation to solve pose via PnP (3D-2D), with E/H fallback.
 
-Both share the same geometry backend (E/H selection, pure rotation detection, USAC_MAGSAC).
+Both share the same geometry backend (E/H selection, pure rotation detection, USAC_MAGSAC). The neural pipeline additionally uses depth-based PnP when calibration is available.
 
 ## How It Works
 
 1. **Feature Detection & Matching**:
    - *Classical*: ORB features with brute-force Hamming matching, ratio test, and cross-check
    - *Neural*: SuperPoint keypoint extraction + LightGlue attention-based matching (ONNX)
-2. **Pose Estimation**:
-   - With calibration: Smart selection between Essential matrix (3D scenes) and Homography (planar scenes)
+2. **Depth Estimation** (neural only):
+   - Depth Anything V2 (ViT-S) predicts monocular depth from a single image
+   - Matched keypoints are back-projected to 3D using the depth map
+3. **Pose Estimation**:
+   - *Neural with depth*: PnP solver on 3D-2D correspondences (depth-based back-projection + `solvePnPRansac`), falls back to E/H if PnP fails
+   - *Classical / fallback*: Smart selection between Essential matrix (3D scenes) and Homography (planar scenes)
    - Without calibration: Auto-focal estimation using CVPR 2024 iterative method from PoseLib
    - Pure rotation detection: When camera rotates without translation, outputs rotation-only pose
-3. **Validation**: Triangulation with cheirality and reprojection error checks
+4. **Validation**: Triangulation with cheirality and reprojection error checks, PnP inlier ratio and reprojection error
 
 For detailed algorithm documentation, see [ALGORITHM.md](ALGORITHM.md).
 
@@ -277,7 +281,7 @@ g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
 | `-m <file>` | Output matched points to file (for visualization) | None |
 | `-d` | Debug output (prints selection metrics to stderr) | Off |
 
-### Neural (SuperPoint + LightGlue)
+### Neural (SuperPoint + LightGlue + Depth Anything V2)
 
 ```bash
 ./vo_neural <image1> <image2> [options]
@@ -289,6 +293,10 @@ g++ -O3 -std=c++17 -o vo_submission src/vo_submission.cpp \
 | `-k <fx,fy,cx,cy>` | Full camera intrinsics matrix | None |
 | `-M <models_dir>` | Path to ONNX models directory | `models/` |
 | `-d` | Debug output | Off |
+| `-D` | Depth debug (prints PnP vs E/H selection) | Off |
+| `--no-depth` | Disable depth estimation (use E/H only) | Off |
+
+When calibration is provided and the depth model is available, `vo_neural` uses Depth Anything V2 to estimate monocular depth, back-projects keypoints to 3D, and solves pose via PnP. If PnP fails (too few inliers, poor reprojection), it falls back to the E/H geometry path.
 
 Both binaries produce identical output format (3x3 rotation matrix + translation vector).
 
@@ -308,20 +316,23 @@ Both binaries produce identical output format (3x3 rotation matrix + translation
 ./vo_neural frame001.jpg frame002.jpg -k 517.3,516.5,318.6,255.3 -M /path/to/models
 ```
 
-### Benchmark Comparison (ORB vs Neural)
+### Benchmark Comparison (ORB vs Neural vs Neural+Depth)
 
 Evaluated on three datasets with known ground truth:
 
 | Dataset | Frontend | Rotation Error (mean) | Translation Error (mean) | Trans < 30° |
 |---------|----------|-----------------------|--------------------------|-------------|
 | TUM fr1/xyz | ORB | 5.79° | 28.23° | 56.8% |
-| TUM fr1/xyz | Neural | 5.66° | 13.94° | 87.5% |
+| TUM fr1/xyz | Neural (E/H) | 5.66° | 13.94° | 87.5% |
+| TUM fr1/xyz | Neural+Depth | 5.99° | **11.54°** | **98.9%** |
 | AGZ Zurich | ORB | 2.63° | 39.08° | 34.0% |
-| AGZ Zurich | Neural | 2.10° | 25.03° | 79.0% |
+| AGZ Zurich | Neural (E/H) | 2.10° | 25.03° | 79.0% |
+| AGZ Zurich | Neural+Depth | **1.51°** | 26.36° | 72.0% |
 | Custom (ArUco) | ORB | 1.26° | 34.05° | 42.0% |
-| Custom (ArUco) | Neural | 1.11° | 38.97° | 37.7% |
+| Custom (ArUco) | Neural (E/H) | 1.11° | 38.97° | 37.7% |
+| Custom (ArUco) | Neural+Depth | 1.32° | **22.36°** | **72.5%** |
 
-Neural matching improves translation accuracy on most datasets due to higher-quality correspondences. The custom dataset is an exception — its small baseline motions expose degenerate geometry that affects both frontends.
+Adding Depth Anything V2 with PnP improves translation direction accuracy, especially on the custom dataset where small-baseline degenerate geometry previously caused failures. The depth-based PnP path handles these cases by providing 3D structure from monocular depth prediction.
 
 ### Performance (Raspberry Pi 4)
 

@@ -1,12 +1,18 @@
 /*
- * Neural Visual Odometry - 2-Frame Relative Pose Estimation (SuperPoint + LightGlue)
+ * Neural Visual Odometry - 2-Frame Relative Pose Estimation
+ * SuperPoint + LightGlue for features, Depth Anything V2 for monocular depth.
  * Uses ONNX Runtime for inference, shared geometry backend with vo_submission.
+ *
+ * When depth estimation is available and calibration is known, uses PnP (3D-2D)
+ * to recover scaled pose. Falls back to E/H geometry when PnP fails.
  *
  * Usage: ./vo_neural <image1> <image2> [options]
  *   -f <focal>         Focal length (assumes fx=fy, cx=w/2, cy=h/2)
  *   -k <fx,fy,cx,cy>   Full camera intrinsics
  *   -d                 Debug output
+ *   -D                 Depth debug (prints PnP vs E/H selection)
  *   -M <models_dir>    Path to ONNX models directory (default: models/)
+ *   --no-depth         Disable depth estimation (use E/H only)
  */
 
 #include <opencv2/opencv.hpp>
@@ -325,12 +331,117 @@ private:
     }
 };
 
+class DepthAnythingONNX {
+public:
+    DepthAnythingONNX(const std::string& model_path, bool debug = false)
+        : debug_(debug) {
+        Ort::SessionOptions opts;
+        opts.SetIntraOpNumThreads(4);
+        opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        bool cuda_requested = tryAppendCUDA(opts, debug);
+        try {
+            session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), opts);
+        } catch (const Ort::Exception& e) {
+            if (cuda_requested) {
+                if (debug) std::cerr << "Depth CUDA session failed, falling back to CPU" << std::endl;
+                Ort::SessionOptions cpu_opts;
+                cpu_opts.SetIntraOpNumThreads(4);
+                cpu_opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+                session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), cpu_opts);
+            } else {
+                throw;
+            }
+        }
+    }
+
+    // Estimate depth from a BGR color image
+    // Returns CV_32F depth map at original resolution (inverse relative depth)
+    cv::Mat estimate(const cv::Mat& bgr_img) {
+        int orig_h = bgr_img.rows, orig_w = bgr_img.cols;
+
+        // Resize to 518x518
+        cv::Mat resized;
+        cv::resize(bgr_img, resized, cv::Size(INPUT_SIZE, INPUT_SIZE), 0, 0, cv::INTER_LINEAR);
+
+        // Convert BGR to RGB and normalize with ImageNet mean/std
+        cv::Mat rgb;
+        cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+
+        // Create float tensor [1, 3, 518, 518] in CHW format
+        std::vector<float> input_data(3 * INPUT_SIZE * INPUT_SIZE);
+        for (int c = 0; c < 3; c++) {
+            for (int y = 0; y < INPUT_SIZE; y++) {
+                for (int x = 0; x < INPUT_SIZE; x++) {
+                    float val = rgb.at<cv::Vec3b>(y, x)[c] / 255.0f;
+                    val = (val - MEAN[c]) / STD[c];
+                    input_data[c * INPUT_SIZE * INPUT_SIZE + y * INPUT_SIZE + x] = val;
+                }
+            }
+        }
+
+        std::array<int64_t, 4> input_shape = {1, 3, INPUT_SIZE, INPUT_SIZE};
+        auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+            memory_info, input_data.data(), input_data.size(),
+            input_shape.data(), input_shape.size());
+
+        const char* input_names[] = {"l_x_"};
+        const char* output_names[] = {"select_36"};
+
+        auto outputs = session_->Run(Ort::RunOptions{nullptr},
+                                      input_names, &input_tensor, 1,
+                                      output_names, 1);
+
+        // Output is [1, 518, 518] inverse relative depth
+        auto out_info = outputs[0].GetTensorTypeAndShapeInfo();
+        auto out_shape = out_info.GetShape();
+        int out_h, out_w;
+        if (out_shape.size() == 4) {
+            out_h = static_cast<int>(out_shape[2]);
+            out_w = static_cast<int>(out_shape[3]);
+        } else {
+            // [1, H, W]
+            out_h = static_cast<int>(out_shape[1]);
+            out_w = static_cast<int>(out_shape[2]);
+        }
+        const float* out_data = outputs[0].GetTensorData<float>();
+
+        // Copy to cv::Mat
+        cv::Mat depth_518(out_h, out_w, CV_32F);
+        std::memcpy(depth_518.data, out_data, out_h * out_w * sizeof(float));
+
+        // Resize back to original resolution
+        cv::Mat depth_map;
+        cv::resize(depth_518, depth_map, cv::Size(orig_w, orig_h), 0, 0, cv::INTER_LINEAR);
+
+        if (debug_) {
+            double min_val, max_val;
+            cv::minMaxLoc(depth_map, &min_val, &max_val);
+            std::cerr << "DepthAnything: output " << orig_w << "x" << orig_h
+                      << " range=[" << min_val << ", " << max_val << "]" << std::endl;
+        }
+
+        return depth_map;
+    }
+
+private:
+    static constexpr int INPUT_SIZE = 518;
+    static constexpr float MEAN[3] = {0.485f, 0.456f, 0.406f};
+    static constexpr float STD[3] = {0.229f, 0.224f, 0.225f};
+
+    Ort::Env env_{ORT_LOGGING_LEVEL_WARNING, "DepthAnything"};
+    std::unique_ptr<Ort::Session> session_;
+    bool debug_;
+};
+
 int main(int argc, char** argv) {
     std::string img1_path, img2_path;
     std::string models_dir = "models";
     double user_focal = -1;
     double user_fx = -1, user_fy = -1, user_cx = -1, user_cy = -1;
     bool debug = false;
+    bool depth_debug = false;
+    bool use_depth = true;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -345,6 +456,11 @@ int main(int argc, char** argv) {
             models_dir = argv[++i];
         } else if (arg == "-d") {
             debug = true;
+        } else if (arg == "-D") {
+            depth_debug = true;
+            debug = true;  // -D implies -d
+        } else if (arg == "--no-depth") {
+            use_depth = false;
         } else if (img1_path.empty()) {
             img1_path = arg;
         } else if (img2_path.empty()) {
@@ -359,6 +475,8 @@ int main(int argc, char** argv) {
         std::cerr << "  -k <fx,fy,cx,cy>   Full camera intrinsics" << std::endl;
         std::cerr << "  -M <models_dir>    Path to ONNX models directory (default: models/)" << std::endl;
         std::cerr << "  -d                 Debug output" << std::endl;
+        std::cerr << "  -D                 Depth debug (prints PnP vs E/H selection)" << std::endl;
+        std::cerr << "  --no-depth         Disable depth estimation (use E/H only)" << std::endl;
         return 1;
     }
 
@@ -372,6 +490,23 @@ int main(int argc, char** argv) {
     if (img1.empty() || img2.empty()) {
         std::cerr << "Error: Could not load images" << std::endl;
         return 1;
+    }
+
+    // Load color image 1 for depth estimation (only needed for frame 1)
+    cv::Mat img1_bgr;
+    std::string depth_model_path = models_dir + "/depth_anything_v2_vits.onnx";
+    bool depth_available = use_depth && has_calib;
+
+    // Check if depth model exists before loading color image
+    if (depth_available) {
+        std::ifstream depth_check(depth_model_path);
+        if (!depth_check.good()) {
+            if (debug) std::cerr << "Depth model not found: " << depth_model_path << std::endl;
+            depth_available = false;
+        } else {
+            img1_bgr = cv::imread(img1_path, cv::IMREAD_COLOR);
+            if (img1_bgr.empty()) depth_available = false;
+        }
     }
 
     std::string sp_path = models_dir + "/superpoint.onnx";
@@ -462,7 +597,44 @@ int main(int argc, char** argv) {
         config.cy = img1.rows / 2.0;
     }
 
-    vo_geometry::PoseResult pose = vo_geometry::estimatePose(pts1, pts2, config);
+    // Try depth-based PnP path first (recovers scaled translation)
+    bool used_pnp = false;
+    vo_geometry::PoseResult pose;
+
+    if (depth_available) {
+        try {
+            DepthAnythingONNX depth_net(depth_model_path, debug);
+            cv::Mat depth_map = depth_net.estimate(img1_bgr);
+
+            if (!depth_map.empty()) {
+                pose = vo_geometry::estimatePosePnP(pts1, pts2, depth_map, config);
+                if (pose.valid) {
+                    used_pnp = true;
+                    double t_norm = cv::norm(pose.t);
+                    // Normalize translation to unit length for consistent output
+                    // (relative depth gives arbitrary scale)
+                    if (t_norm > 1e-6) {
+                        pose.t = pose.t / t_norm;
+                    }
+                    if (debug || depth_debug) {
+                        std::cerr << "Pose method: PnP (depth-based, |t| before norm=" << t_norm << ")" << std::endl;
+                    }
+                } else if (debug || depth_debug) {
+                    std::cerr << "PnP failed, falling back to E/H" << std::endl;
+                }
+            }
+        } catch (const Ort::Exception& e) {
+            if (debug) std::cerr << "Depth model error: " << e.what() << std::endl;
+        }
+    }
+
+    // Fallback to E/H geometry
+    if (!used_pnp) {
+        pose = vo_geometry::estimatePose(pts1, pts2, config);
+        if (debug || depth_debug) {
+            std::cerr << "Pose method: E/H (unit translation)" << std::endl;
+        }
+    }
 
     if (!pose.valid) {
         vo_geometry::printZeroPose();

@@ -607,4 +607,164 @@ inline PoseResult estimatePose(const std::vector<cv::Point2f>& pts1,
     return result;
 }
 
+// Bilinear interpolation for subpixel depth sampling
+inline float sampleDepthBilinear(const cv::Mat& depth_map, float u, float v) {
+    int x0 = static_cast<int>(std::floor(u));
+    int y0 = static_cast<int>(std::floor(v));
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+
+    if (x0 < 0 || y0 < 0 || x1 >= depth_map.cols || y1 >= depth_map.rows)
+        return -1.0f;
+
+    float fx = u - x0;
+    float fy = v - y0;
+
+    float d00 = depth_map.at<float>(y0, x0);
+    float d10 = depth_map.at<float>(y0, x1);
+    float d01 = depth_map.at<float>(y1, x0);
+    float d11 = depth_map.at<float>(y1, x1);
+
+    return d00 * (1 - fx) * (1 - fy) +
+           d10 * fx * (1 - fy) +
+           d01 * (1 - fx) * fy +
+           d11 * fx * fy;
+}
+
+// PnP-based pose estimation using monocular depth map
+// Back-projects pts1 to 3D using depth_map, then solves 3D-2D PnP against pts2
+inline PoseResult estimatePosePnP(const std::vector<cv::Point2f>& pts1,
+                                   const std::vector<cv::Point2f>& pts2,
+                                   const cv::Mat& depth_map,
+                                   const GeometryConfig& config) {
+    PoseResult result;
+    result.valid = false;
+
+    if (!config.has_calib || config.fx <= 0 || config.fy <= 0) return result;
+
+    double fx = config.fx, fy = config.fy, cx = config.cx, cy = config.cy;
+    cv::Mat K = (cv::Mat_<double>(3, 3) << fx, 0, cx, 0, fy, cy, 0, 0, 1);
+    cv::Mat distCoeffs = cv::Mat::zeros(4, 1, CV_64F);
+
+    // Back-project pts1 to 3D using depth map
+    std::vector<cv::Point3f> pts3D;
+    std::vector<cv::Point2f> pts2D;
+
+    for (size_t i = 0; i < pts1.size(); i++) {
+        float u = pts1[i].x;
+        float v = pts1[i].y;
+
+        // Sample depth with bilinear interpolation
+        float inv_depth = sampleDepthBilinear(depth_map, u, v);
+        if (inv_depth < 1e-3f || inv_depth > 1e4f) continue;
+
+        // Depth Anything outputs relative inverse depth (higher = closer)
+        // Convert to depth: d = 1 / inv_depth
+        float d = 1.0f / inv_depth;
+        if (d < 1e-3f || d > 1e4f) continue;
+
+        // Back-project to 3D
+        float X = static_cast<float>((u - cx) * d / fx);
+        float Y = static_cast<float>((v - cy) * d / fy);
+        float Z = d;
+
+        pts3D.push_back(cv::Point3f(X, Y, Z));
+        pts2D.push_back(pts2[i]);
+    }
+
+    if (config.debug) {
+        std::cerr << "PnP: " << pts3D.size() << "/" << pts1.size()
+                  << " points with valid depth" << std::endl;
+    }
+
+    // Need minimum points for PnP
+    if (pts3D.size() < 10) {
+        if (config.debug) std::cerr << "PnP: too few 3D points" << std::endl;
+        return result;
+    }
+
+    // Solve PnP with RANSAC
+    cv::Mat rvec, tvec;
+    cv::Mat inliers;
+    bool success = false;
+
+    try {
+        success = cv::solvePnPRansac(pts3D, pts2D, K, distCoeffs,
+                                      rvec, tvec, false,
+                                      300,       // iterations
+                                      4.0,       // reprojection threshold
+                                      0.99,      // confidence
+                                      inliers,
+                                      cv::SOLVEPNP_ITERATIVE);
+    } catch (const cv::Exception& e) {
+        if (config.debug) std::cerr << "PnP: OpenCV exception: " << e.what() << std::endl;
+        return result;
+    }
+
+    if (!success || inliers.empty()) {
+        if (config.debug) std::cerr << "PnP: solvePnPRansac failed" << std::endl;
+        return result;
+    }
+
+    int num_inliers = inliers.rows;
+    double inlier_ratio = static_cast<double>(num_inliers) / pts3D.size();
+
+    if (config.debug) {
+        std::cerr << "PnP: " << num_inliers << " inliers ("
+                  << (inlier_ratio * 100.0) << "%)" << std::endl;
+    }
+
+    // Reject if too few inliers
+    if (num_inliers < 8 || inlier_ratio < 0.3) {
+        if (config.debug) std::cerr << "PnP: insufficient inliers" << std::endl;
+        return result;
+    }
+
+    // Compute reprojection error on inliers
+    std::vector<cv::Point3f> inlier_pts3D;
+    std::vector<cv::Point2f> inlier_pts2D;
+    for (int i = 0; i < num_inliers; i++) {
+        int idx = inliers.at<int>(i);
+        inlier_pts3D.push_back(pts3D[idx]);
+        inlier_pts2D.push_back(pts2D[idx]);
+    }
+
+    std::vector<cv::Point2f> projected;
+    cv::projectPoints(inlier_pts3D, rvec, tvec, K, distCoeffs, projected);
+
+    double total_err = 0;
+    for (size_t i = 0; i < projected.size(); i++) {
+        double dx = projected[i].x - inlier_pts2D[i].x;
+        double dy = projected[i].y - inlier_pts2D[i].y;
+        total_err += std::sqrt(dx * dx + dy * dy);
+    }
+    double mean_reproj_err = total_err / projected.size();
+
+    if (config.debug) {
+        std::cerr << "PnP: mean reprojection error = " << mean_reproj_err << " px" << std::endl;
+    }
+
+    // Reject if reprojection error too high
+    if (mean_reproj_err > 5.0) {
+        if (config.debug) std::cerr << "PnP: reprojection error too high" << std::endl;
+        return result;
+    }
+
+    // Convert rvec to rotation matrix
+    cv::Mat R;
+    cv::Rodrigues(rvec, R);
+
+    // Validate rotation matrix
+    double det = cv::determinant(R);
+    if (std::abs(det - 1.0) > 0.01) {
+        if (config.debug) std::cerr << "PnP: invalid rotation (det=" << det << ")" << std::endl;
+        return result;
+    }
+
+    result.R = R.clone();
+    result.t = tvec.clone();
+    result.valid = true;
+    return result;
+}
+
 } // namespace vo_geometry
